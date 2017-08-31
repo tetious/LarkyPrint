@@ -1,3 +1,5 @@
 .pioenvs
 .piolibdeps
 CMakeListsPrivate.txt
+.vscode/c_cpp_properties.json
+cmake-build-debug
