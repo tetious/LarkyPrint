@@ -1,7 +1,7 @@
 #include "Arduino.h"
 #include "hd44780.h"
 
-const byte lcd_pins[] = {25, 26, 32, 33};
+const byte lcd_pins[] = {25, 26, 12, 13};
 const byte lcd_clk = 27;
 const byte lcd_rs = 14;
 
@@ -38,13 +38,16 @@ IRAM_ATTR void read() {
     static bool firstHalf = true;
     static lcd_cap current = lcd_cap();
 
-    if (digitalRead(lcd_rs) == 0) {
+    // for atomicity and efficiency, grab the whole GPIO at once.
+    auto read = GPIO.in;
+
+    if (bitRead(read, lcd_rs) == 0) {
         current.cmd = true;
     }
 
     // full byte is broken into two, so stuff them into the correct place
     for (int pin = 0; pin < sizeof(lcd_pins); pin++) {
-        current.data |= (digitalRead(lcd_pins[pin]) << pin + (firstHalf ? 4 : 0));
+        current.data |= (bitRead(read, lcd_pins[pin]) << pin + (firstHalf ? 4 : 0));
     }
 
     if (!firstHalf) {
@@ -78,7 +81,7 @@ void setup() {
     }
     pinMode(lcd_clk, INPUT_PULLDOWN);
     pinMode(lcd_rs, INPUT_PULLDOWN);
-    attachInterrupt(lcd_clk, read, RISING);
+    attachInterrupt(lcd_clk, read, FALLING);
 }
 
 void loop() {
