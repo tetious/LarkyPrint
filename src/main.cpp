@@ -1,6 +1,5 @@
 #include "Arduino.h"
-#include "hd44780.h"
-#include "RingBuffer.h"
+#include "ScreenBuffer.h"
 #include <WiFi.h>
 #include <WebSocketsServer.h>
 #include "secure.h"
@@ -10,13 +9,7 @@ const byte lcd_clk = 27;
 const byte lcd_rs = 14;
 
 WebSocketsServer webSocket = WebSocketsServer(80);
-
-struct lcd_cap {
-    volatile bool cmd;
-    volatile char data;
-};
-
-RingBuffer<lcd_cap> buffer;
+ScreenBuffer buffer;
 
 IRAM_ATTR void read() {
     static bool firstHalf = true;
@@ -42,30 +35,13 @@ IRAM_ATTR void read() {
     firstHalf = !firstHalf;
 }
 
-void processItem() {
-    auto cap = buffer.read();
-    if (cap == nullptr) return;
-    if (cap->cmd) {
-        if ((cap->data & LCD_SETDDRAMADDR) == LCD_SETDDRAMADDR) {
-            auto loc = static_cast<byte>(cap->data & 0x7F); // grab last 7 bits
-            auto row = static_cast<byte>(loc / 20), col = static_cast<byte>(loc % 20);
-            if (loc == 0) {
-                Serial.println();
-            }
-        }
-    } else {
-        Serial.write(cap->data);
-    }
-}
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
 
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-
-    switch(type) {
+    switch (type) {
         case WStype_DISCONNECTED:
             Serial.printf("[%u] Disconnected!\n", num);
             break;
-        case WStype_CONNECTED:
-        {
+        case WStype_CONNECTED: {
             IPAddress ip = webSocket.remoteIP(num);
             Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
 
@@ -101,7 +77,7 @@ void setup() {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("");
+    Serial.println();
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
@@ -118,6 +94,11 @@ void setup() {
 }
 
 void loop() {
-    processItem();
+    if (millis() % 500) {
+        for (auto chr : buffer.read()) {
+            if (chr > 31) Serial.write(chr);
+        }
+        Serial.println();
+    }
     webSocket.loop();
 }
