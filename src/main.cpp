@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include "hd44780.h"
+#include "RingBuffer.h"
 
 const byte lcd_pins[] = {25, 26, 12, 13};
 const byte lcd_clk = 27;
@@ -10,29 +11,7 @@ struct lcd_cap {
     volatile char data;
 };
 
-class CapBuffer {
-    const static byte SIZE = 80;
-private:
-    lcd_cap buffer[SIZE];
-    byte cursorPos, readCursorPos;
-public:
-
-    void write(lcd_cap current) {
-        buffer[this->cursorPos] = current;
-        this->cursorPos = static_cast<byte>((this->cursorPos + 1) % SIZE);
-    }
-
-    lcd_cap *read() {
-        if (this->readCursorPos == this->cursorPos) {
-            return nullptr;
-        } else {
-            this->readCursorPos = static_cast<byte>((this->readCursorPos + 1) % SIZE);
-            return &buffer[this->readCursorPos];
-        }
-    }
-};
-
-CapBuffer buffer;
+RingBuffer<lcd_cap> buffer;
 
 IRAM_ATTR void read() {
     static bool firstHalf = true;
