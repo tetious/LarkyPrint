@@ -7,6 +7,7 @@
 const byte lcd_pins[] = {25, 26, 12, 13};
 const byte lcd_clk = 27;
 const byte lcd_rs = 14;
+long lastUpdate = 0;
 
 WebSocketsServer webSocket = WebSocketsServer(80);
 ScreenBuffer buffer;
@@ -94,11 +95,13 @@ void setup() {
 }
 
 void loop() {
-    if (millis() % 500) {
+    if (lastUpdate == 0 || millis() - lastUpdate > 1000) {
+        String status;
         for (auto chr : buffer.read()) {
-            if (chr > 31) Serial.write(chr);
+            if (chr > 31) status.concat(chr);
         }
-        Serial.println();
+        webSocket.broadcastTXT(status);
+        lastUpdate = millis();
     }
     webSocket.loop();
 }
