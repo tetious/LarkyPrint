@@ -3,14 +3,20 @@
 #include <WiFi.h>
 #include <WebSocketsServer.h>
 #include "secure.h"
+#include "SPI.h"
+#include "FS.h"
+#include "SD.h"
+#include <ArduinoJson.h>
 
 const byte lcd_pins[] = {25, 26, 12, 13};
 const byte lcd_clk = 27;
 const byte lcd_rs = 14;
+const byte SPI_CLK = 2, SPI_MISO = 4, SPI_MOSI = 16, SD_SPI_SS = 17;
 long lastUpdate = 0;
 
 WebSocketsServer webSocket = WebSocketsServer(80);
 ScreenBuffer buffer;
+SPIClass sdSpi = SPIClass();
 
 IRAM_ATTR void read() {
     static bool firstHalf = true;
@@ -18,7 +24,6 @@ IRAM_ATTR void read() {
 
     // for atomicity and efficiency, grab the whole GPIO at once.
     auto read = GPIO.in;
-
     if (bitRead(read, lcd_rs) == 0) {
         current.cmd = true;
     }
@@ -37,41 +42,56 @@ IRAM_ATTR void read() {
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
+    static auto fileUploading = false;
+    static File file;
 
     switch (type) {
         case WStype_DISCONNECTED:
-            Serial.printf("[%u] Disconnected!\n", num);
+            Serial.printf("[%u] Disconnected!\r\n", num);
             break;
         case WStype_CONNECTED: {
             IPAddress ip = webSocket.remoteIP(num);
-            Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-
-            // send message to client
-            webSocket.sendTXT(num, "Connected");
+            Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", num, ip[0], ip[1], ip[2], ip[3], payload);
         }
             break;
-        case WStype_TEXT:
-            Serial.printf("[%u] get Text: %s\n", num, payload);
+        case WStype_TEXT: {
+            Serial.printf("[%u] get Text: %s\r\n", num, payload);
 
-            // send message to client
-            // webSocket.sendTXT(num, "message here");
-
-            // send data to all connected clients
-            // webSocket.broadcastTXT("message here");
+            DynamicJsonBuffer jsonBuffer;
+            JsonObject &root = jsonBuffer.parseObject(payload);
+            if (root["op"] == "fileUploadStart") {
+                Serial.printf("Starting file upload for file %s.\r\n", root["name"].as<String>());
+                file = SD.open(root["name"].as<String>(), FILE_WRITE);
+                if (!file) {
+                    Serial.println("Failed to open file for writing");
+                    webSocket.sendTXT(num, "ERR"); // FIXME
+                } else {
+                    fileUploading = true;
+                }
+            } else if (root["op"] == "fileUploadComplete") {
+                Serial.println("Closing file.");
+                fileUploading = false;
+                file.close();
+            }
             break;
-        case WStype_BIN:
-            Serial.printf("[%u] get binary length: %u\n", num, length);
-            //hexdump(payload, length);
+        }
+        case WStype_BIN: {
+            Serial.printf("[%u] get binary length: %u\r\n", num, length);
 
-            // send message to client
-            // webSocket.sendBIN(num, payload, length);
+            if (fileUploading) {
+                file.write(payload, length);
+                Serial.printf("fileUpload: Added %u bytes.\r\n", length);
+                webSocket.sendTXT(num, R"({"op": "fileUploadChunkAck"})");
+            }
             break;
+        }
     }
 }
 
 void setup() {
     Serial.begin(115200);
     Serial.setDebugOutput(true);
+    sdSpi.begin(SPI_CLK, SPI_MISO, SPI_MOSI, SD_SPI_SS);
     WiFi.begin(ssid, password);
 
     while (WiFi.status() != WL_CONNECTED) {
@@ -83,6 +103,20 @@ void setup() {
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
 
+    if (!SD.begin(SD_SPI_SS, sdSpi)) {
+        Serial.println("Card Mount Failed");
+        return;
+    }
+    uint8_t cardType = SD.cardType();
+
+    if (cardType == CARD_NONE) {
+        Serial.println("No SD card attached");
+        return;
+    }
+
+    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+    Serial.printf("SD Card Size: %lluMB\n", cardSize);
+
     for (unsigned char lcd_pin : lcd_pins) {
         pinMode(lcd_pin, INPUT_PULLDOWN);
     }
@@ -92,6 +126,8 @@ void setup() {
 
     webSocket.begin();
     webSocket.onEvent(webSocketEvent);
+
+    Serial.printf("Free heap: %u\r\n",ESP.getFreeHeap());
 }
 
 void loop() {
@@ -100,7 +136,7 @@ void loop() {
         for (auto chr : buffer.read()) {
             if (chr > 31) status.concat(chr);
         }
-        webSocket.broadcastTXT(status);
+        //todo webSocket.broadcastTXT(status);
         lastUpdate = millis();
     }
     webSocket.loop();
