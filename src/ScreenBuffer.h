@@ -17,12 +17,19 @@ class ScreenBuffer {
 private:
     array<char, SIZE> buffer{};
     byte cursorPos = 0;
+    byte leftToSkip = 0;
 public:
     ScreenBuffer() {
         buffer.fill(' ');
     }
 
     void write(lcd_cap &cap) {
+
+        if(leftToSkip > 0) {
+            leftToSkip--;
+            return;
+        }
+
         if (cap.cmd) {
             if ((cap.data & LCD_SETDDRAMADDR) == LCD_SETDDRAMADDR) {
                 auto dramLoc = static_cast<byte>(cap.data & 0x7F); // grab last 7 bits
@@ -35,16 +42,19 @@ public:
                     loc -= 24;
                 }
                 auto row = static_cast<byte>(loc / 20), col = static_cast<byte>(loc % 20);
-                this->cursorPos = loc;
+                cursorPos = loc;
             } else if ((cap.data & LCD_CLEARDISPLAY) == LCD_CLEARDISPLAY) {
                 buffer.fill(' ');
-                this->cursorPos = 0;
+                cursorPos = 0;
+            } else if ((cap.data & LCD_SETCGRAMADDR) == LCD_SETCGRAMADDR) {
+                // next 8 bytes are graphical data and should be skipped.
+                leftToSkip = 8;
             }
             return;
         }
 
-        buffer[this->cursorPos] = cap.data;
-        this->cursorPos++;
+        buffer[cursorPos] = cap.data;
+        cursorPos++;
     }
 
     array<char, SIZE> read() {
