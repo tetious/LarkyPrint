@@ -1,32 +1,37 @@
 #include <algorithm>
 #include <functional>
-#include <utility>
 #include "Thing.h"
 #include "TimerThing.h"
 #include "Arduino.h"
 
-Thing TimerThing::defer(const unsigned long _millis, void(*lambda)()) {
-    return defer_abs(_millis + millis(), lambda);
+using namespace std;
+
+Thing TimerThing::defer(const unsigned long _millis, function<void()> lambda) {
+    return defer_abs(_millis + millis(), move(lambda));
 }
 
-Thing TimerThing::defer_abs(const unsigned long _millis, void(*lambda)()) {
-    auto thing = Thing{this, _millis, lambda};
+Thing TimerThing::defer_abs(const unsigned long _millis, function<void()> lambda) {
+    auto thing = Thing{this, _millis, move(lambda)};
     things.push_back(thing);
     return thing;
 }
 
 void TimerThing::loop(const unsigned long _millis) {
-    std::vector <Thing> triggeredThings;
-    std::vector<Thing> new_first;
-    std::partition_copy(std::make_move_iterator(things.begin()),
-                        std::make_move_iterator(things.end()),
-                        std::back_inserter(triggeredThings),
-                        std::back_inserter(new_first),
-                        [&](Thing it) { return it.when <= _millis; });
-    things = std::move(new_first);
+    vector<Thing> triggeredThings;
+    vector<Thing> new_first;
+
+    partition_copy(things.begin(),
+                   things.end(),
+                   back_inserter(triggeredThings),
+                   back_inserter(new_first),
+                   [&](Thing it) { return it.when <= _millis; });
+    things = move(new_first);
 
     for (auto thing : triggeredThings) {
-        Serial.println("Triggered!");
-        thing.lambda();
+        if (thing.lambda == nullptr) {
+            Serial.println("NULL! :(");
+        } else {
+            thing.lambda();
+        }
     }
 }

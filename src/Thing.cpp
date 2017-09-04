@@ -1,13 +1,16 @@
 #include "Thing.h"
+
 #include "TimerThing.h"
 
-Thing Thing::then(void(*lambda)()) {
-    return timerThing->defer_abs(when + 1, lambda);
+using namespace std;
+
+Thing Thing::then(function<void()> lambda) {
+    return timerThing->defer_abs(when + 1, move(lambda));
 }
 
-Thing Thing::then(const unsigned long _millis, void(*lambda)()) {
-    return timerThing->defer_abs(when + _millis, lambda);
+Thing Thing::then(const unsigned long _millis, function<void()> lambda) {
+    return timerThing->defer_abs(when + _millis, move(lambda));
 }
 
-Thing::Thing(TimerThing *timerThing, const unsigned long when, void(*lambda)())
-        : when(when), lambda(lambda), timerThing(timerThing) {}
+Thing::Thing(TimerThing *timerThing, const unsigned long when, function<void()> lambda)
+        : when(when), lambda(move(lambda)), timerThing(timerThing) {}

@@ -16,7 +16,7 @@ const byte SPI_CLK = 2, SPI_MISO = 4, SPI_MOSI = 16, SD_SPI_SS = 17;
 long lastUpdate = 0;
 
 WebSocketsServer webSocket = WebSocketsServer(80);
-ScreenBuffer buffer;
+ScreenBuffer buffer = ScreenBuffer();
 SPIClass sdSpi = SPIClass();
 MenuManager menuManager = MenuManager(buffer);
 
@@ -150,6 +150,7 @@ void loop() {
             if (chr > 31) status.concat(chr);
         }
         //todo webSocket.broadcastTXT(status);
+        //Serial.println(status);
         lastUpdate = _millis;
     }
     webSocket.loop();

@@ -52,7 +52,9 @@ public:
             }
             return;
         }
-
+        if(cursorPos > SIZE) {
+            Serial.printf("CursorPos is too high!! %u", cursorPos);
+        }
         buffer[cursorPos] = cap.data;
         cursorPos++;
     }
