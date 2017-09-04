@@ -1,18 +1,15 @@
 #include "Arduino.h"
-#include "ScreenBuffer.h"
 #include <WiFi.h>
 #include <WebSocketsServer.h>
-#include "secure.h"
 #include "SPI.h"
 #include "FS.h"
 #include "SD.h"
 #include <ArduinoJson.h>
+#include "secure.h"
+#include "pins.h"
+#include "ScreenBuffer.h"
 #include "MenuManager.h"
 
-const byte lcd_pins[] = {25, 26, 12, 13};
-const byte lcd_clk = 27;
-const byte lcd_rs = 14;
-const byte SPI_CLK = 2, SPI_MISO = 4, SPI_MOSI = 16, SD_SPI_SS = 17;
 long lastUpdate = 0;
 
 WebSocketsServer webSocket = WebSocketsServer(80);
@@ -24,15 +21,13 @@ IRAM_ATTR void read() {
     static bool firstHalf = true;
     static lcd_cap current = lcd_cap();
 
-    // for atomicity and efficiency, grab the whole GPIO at once.
-    auto read = GPIO.in;
-    if (bitRead(read, lcd_rs) == 0) {
+    if (digitalRead(lcd_rs) == 0) {
         current.cmd = true;
     }
 
     // full byte is broken into two, so stuff them into the correct place
     for (int pin = 0; pin < sizeof(lcd_pins); pin++) {
-        current.data |= (bitRead(read, lcd_pins[pin]) << pin + (firstHalf ? 4 : 0));
+        current.data |= (digitalRead(lcd_pins[pin]) << pin + (firstHalf ? 4 : 0));
     }
 
     if (!firstHalf) {
@@ -99,22 +94,8 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     }
 }
 
-void setup() {
-    Serial.begin(115200);
-    Serial.setDebugOutput(true);
-    sdSpi.begin(SPI_CLK, SPI_MISO, SPI_MOSI, SD_SPI_SS);
-    WiFi.begin(ssid, password);
-
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println();
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-
-    if (!SD.begin(SD_SPI_SS, sdSpi)) {
+void sd_setup() {
+    if (!SD.begin(sd_spi_ss, sdSpi)) {
         Serial.println("Card Mount Failed");
         return;
     }
@@ -127,10 +108,29 @@ void setup() {
 
     uint64_t cardSize = SD.cardSize() / (1024 * 1024);
     Serial.printf("SD Card Size: %lluMB\n", cardSize);
+}
 
-    for (unsigned char lcd_pin : lcd_pins) {
+void setup() {
+    Serial.begin(115200);
+    Serial.setDebugOutput(true);
+    sdSpi.begin(spi_clk, spi_miso, spi_mosi, sd_spi_ss);
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println();
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    sd_setup();
+
+    for (auto lcd_pin : lcd_pins) {
         pinMode(lcd_pin, INPUT_PULLDOWN);
     }
+
     pinMode(lcd_clk, INPUT_PULLDOWN);
     pinMode(lcd_rs, INPUT_PULLDOWN);
     attachInterrupt(lcd_clk, read, FALLING);
@@ -150,7 +150,7 @@ void loop() {
             if (chr > 31) status.concat(chr);
         }
         //todo webSocket.broadcastTXT(status);
-        //Serial.println(status);
+        Serial.println(status);
         lastUpdate = _millis;
     }
     webSocket.loop();

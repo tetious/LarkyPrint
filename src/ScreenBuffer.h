@@ -54,6 +54,7 @@ public:
         }
         if(cursorPos > SIZE) {
             Serial.printf("CursorPos is too high!! %u", cursorPos);
+            return;
         }
         buffer[cursorPos] = cap.data;
         cursorPos++;

@@ -3,18 +3,21 @@
 #include "Arduino.h"
 #include "Thing.h"
 #include "TimerThing.h"
-
-const uint8_t EN_SW = 21, EN_1 = 5, EN_2 = 18;
+#include "pins.h"
 
 const uint8_t TEMP_SYMBOL = 0x02, UP_ARROW = 0x03;
 
 class MenuManager {
+    const unsigned long EncoderTickLength = 30;
+
 public:
     explicit MenuManager(ScreenBuffer &screenBuffer) : screenBuffer(screenBuffer) {
-        pinMode(EN_SW, OUTPUT);
-        digitalWrite(EN_SW, HIGH);
-        pinMode(EN_1, OUTPUT);
-        pinMode(EN_2, OUTPUT);
+        pinMode(encoder_switch, OUTPUT);
+        digitalWrite(encoder_switch, HIGH);
+        pinMode(encoder_1, OUTPUT);
+        digitalWrite(encoder_1, HIGH);
+        pinMode(encoder_2, OUTPUT);
+        digitalWrite(encoder_2, HIGH);
     }
 
     void learn() {
@@ -22,9 +25,9 @@ public:
     }
 
     void click() {
-        digitalWrite(EN_SW, LOW);
+        digitalWrite(encoder_switch, LOW);
 
-        auto thing = timer.defer(100, [] { digitalWrite(EN_SW, HIGH); })
+        auto thing = timer.defer(100, [] { digitalWrite(encoder_switch, HIGH); })
                 .then(100, [&] {
                     update();
                     clickGoesUp ? menuLevel-- : menuLevel++;
@@ -32,23 +35,26 @@ public:
     }
 
     void up() {
-        digitalWrite(EN_1, HIGH);
-        timer.defer(EncoderTickLength, [] {
-            digitalWrite(EN_1, LOW);
-            digitalWrite(EN_2, HIGH);
-        }).then(EncoderTickLength, [] {
-            digitalWrite(EN_2, LOW);
+        digitalWrite(encoder_1, LOW);
+        timer.defer(EncoderTickLength / 2, [] {
+            digitalWrite(encoder_2, LOW);
+        }).then(EncoderTickLength / 2, [] {
+            digitalWrite(encoder_1, HIGH);
+        }).then(EncoderTickLength / 2, [] {
+            digitalWrite(encoder_2, HIGH);
         }).then(100, [&] { update(); });
     }
 
     void down() {
-        digitalWrite(EN_2, HIGH);
-        timer.defer(EncoderTickLength, [] {
-            digitalWrite(EN_2, LOW);
-            digitalWrite(EN_1, HIGH);
-        }).then(EncoderTickLength, [] {
-            digitalWrite(EN_1, LOW);
+        digitalWrite(encoder_2, LOW);
+        timer.defer(EncoderTickLength / 2, [] {
+            digitalWrite(encoder_1, LOW);
+        }).then(EncoderTickLength / 2, [] {
+            digitalWrite(encoder_2, HIGH);
+        }).then(EncoderTickLength / 2, [] {
+            digitalWrite(encoder_1, HIGH);
         }).then(100, [&] { update(); });
+
     }
 
     void loop(const unsigned long _millis) {
@@ -58,7 +64,6 @@ public:
 private:
     ScreenBuffer &screenBuffer;
     TimerThing timer{};
-    const unsigned long EncoderTickLength = 10;
 
     uint8_t menuLevel = 0;
     bool clickGoesUp = false;
@@ -89,6 +94,7 @@ private:
                 break;
             }
         }
+
         Serial.printf("Menu row: %u", menuRow);
     }
 };
