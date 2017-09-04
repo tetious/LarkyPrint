@@ -7,6 +7,7 @@
 #include "FS.h"
 #include "SD.h"
 #include <ArduinoJson.h>
+#include "MenuManager.h"
 
 const byte lcd_pins[] = {25, 26, 12, 13};
 const byte lcd_clk = 27;
@@ -17,6 +18,7 @@ long lastUpdate = 0;
 WebSocketsServer webSocket = WebSocketsServer(80);
 ScreenBuffer buffer;
 SPIClass sdSpi = SPIClass();
+MenuManager menuManager = MenuManager(buffer);
 
 IRAM_ATTR void read() {
     static bool firstHalf = true;
@@ -72,6 +74,15 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
                 Serial.println("Closing file.");
                 fileUploading = false;
                 file.close();
+            } else if (root["op"] == "menuClick") {
+                Serial.println("CLICK!");
+                menuManager.click();
+            } else if (root["op"] == "menuUp") {
+                Serial.println("UP!");
+                menuManager.up();
+            } else if (root["op"] == "menuDown") {
+                Serial.println("DOWN!");
+                menuManager.down();
             }
             break;
         }
@@ -131,13 +142,16 @@ void setup() {
 }
 
 void loop() {
-    if (lastUpdate == 0 || millis() - lastUpdate > 1000) {
+    const auto _millis = millis();
+
+    if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
         String status;
         for (auto chr : buffer.read()) {
             if (chr > 31) status.concat(chr);
         }
         //todo webSocket.broadcastTXT(status);
-        lastUpdate = millis();
+        lastUpdate = _millis;
     }
     webSocket.loop();
+    menuManager.loop(_millis);
 }
