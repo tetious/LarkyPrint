@@ -14,7 +14,6 @@ long lastUpdate = 0;
 
 WebSocketsServer webSocket = WebSocketsServer(80);
 ScreenBuffer buffer = ScreenBuffer();
-SPIClass sdSpi = SPIClass();
 MenuManager menuManager = MenuManager(buffer);
 
 IRAM_ATTR void read() {
@@ -38,9 +37,43 @@ IRAM_ATTR void read() {
     firstHalf = !firstHalf;
 }
 
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
+auto sdSpi = SPIClass();
+IRAM_ATTR void sd_mode(bool espOwnsSd) {
+
+    if(espOwnsSd) {
+        // trigger card removed signal and switch mux to ESP
+        digitalWrite(sd_detect_out, HIGH);
+        digitalWrite(sd_mux_s, LOW);
+        delay(100);
+        if (!SD.begin(sd_spi_ss, sdSpi)) {
+            Serial.println("Card Mount Failed");
+            // FIXME: if the SD card fails to mount, subsequent attempts crash the board
+        } else {
+            uint8_t cardType = SD.cardType();
+
+            if (cardType == CARD_NONE) {
+                Serial.println("No SD card attached");
+            } else {
+                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+                Serial.printf("SD Card Size: %lluMB\n", cardSize);
+            }
+        }
+
+        Serial.println("The ESP now owns the SD card.");
+    } else {
+        SD.end();
+        // switch mux to printer and trigger card insert
+        digitalWrite(sd_mux_s, HIGH);
+        digitalWrite(sd_detect_out, LOW);
+        Serial.println("The printer now owns the SD card.");
+    }
+}
+
+// TODO: rewrite all of this.
+IRAM_ATTR void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
     static auto fileUploading = false;
     static File file;
+    static bool sdMode = true;
 
     switch (type) {
         case WStype_DISCONNECTED:
@@ -52,7 +85,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
         }
             break;
         case WStype_TEXT: {
-            Serial.printf("[%u] get Text: %s\r\n", num, payload);
+            Serial.printf("[%u] Got Text: %s\r\n", num, payload);
 
             DynamicJsonBuffer jsonBuffer;
             JsonObject &root = jsonBuffer.parseObject(payload);
@@ -78,6 +111,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
             } else if (root["op"] == "menuDown") {
                 Serial.println("DOWN!");
                 menuManager.down();
+            } else if (root["op"] == "swapSD") {
+                Serial.println("SD SWAP!");
+                sdMode =!sdMode;
+                sd_mode(sdMode);
             }
             break;
         }
@@ -94,26 +131,9 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     }
 }
 
-void sd_setup() {
-    if (!SD.begin(sd_spi_ss, sdSpi)) {
-        Serial.println("Card Mount Failed");
-        return;
-    }
-    uint8_t cardType = SD.cardType();
-
-    if (cardType == CARD_NONE) {
-        Serial.println("No SD card attached");
-        return;
-    }
-
-    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-    Serial.printf("SD Card Size: %lluMB\n", cardSize);
-}
-
 void setup() {
     Serial.begin(115200);
     Serial.setDebugOutput(true);
-    sdSpi.begin(spi_clk, spi_miso, spi_mosi, sd_spi_ss);
     WiFi.begin(ssid, password);
 
     while (WiFi.status() != WL_CONNECTED) {
@@ -125,32 +145,43 @@ void setup() {
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
 
-    sd_setup();
-
     for (auto lcd_pin : lcd_pins) {
         pinMode(lcd_pin, INPUT_PULLDOWN);
     }
-
     pinMode(lcd_clk, INPUT_PULLDOWN);
     pinMode(lcd_rs, INPUT_PULLDOWN);
-    attachInterrupt(lcd_clk, read, FALLING);
 
     webSocket.begin();
     webSocket.onEvent(webSocketEvent);
 
-    Serial.printf("Free heap: %u\r\n",ESP.getFreeHeap());
+    pinMode(sd_detect_out, OUTPUT);
+    pinMode(sd_mux_s, OUTPUT);
+    sdSpi.begin(spi_clk, spi_miso, spi_mosi);
+    sd_mode(true);
+
+    // do this last as maybe that will help with SD init? This is unproven.
+    attachInterrupt(lcd_clk, read, FALLING);
+
+    Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
 }
 
 void loop() {
     const auto _millis = millis();
-
     if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
         String status;
         for (auto chr : buffer.read()) {
             if (chr > 31) status.concat(chr);
         }
-        //todo webSocket.broadcastTXT(status);
+        // todo: this should probably be event driven and work more intelligently
+        StaticJsonBuffer<200> json;
+        auto& root = json.createObject();
+        root["op"] = "printerStatus";
+        root["status"] = status;
+        String out;
+        root.printTo(out);
+        webSocket.broadcastTXT(out);
         Serial.println(status);
+
         lastUpdate = _millis;
     }
     webSocket.loop();
