@@ -57,13 +57,9 @@ public:
 
     }
 
-    void loop(const unsigned long _millis) {
-        timer.loop(_millis);
-    }
-
 private:
     ScreenBuffer &screenBuffer;
-    TimerThing timer{};
+    TimerThing &timer = TimerThing::Instance();
 
     uint8_t menuLevel = 0;
     bool clickGoesUp = false;

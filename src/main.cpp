@@ -167,6 +167,10 @@ void setup() {
 
 void loop() {
     const auto _millis = millis();
+    static unsigned long lastMillis = 0;
+
+    if(lastMillis != _millis) TimerThing::Instance().loop(_millis);
+
     if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
         String status;
         for (auto chr : buffer.read()) {
@@ -180,10 +184,9 @@ void loop() {
         String out;
         root.printTo(out);
         webSocket.broadcastTXT(out);
-        Serial.println(status);
 
         lastUpdate = _millis;
     }
     webSocket.loop();
-    menuManager.loop(_millis);
+    lastMillis = _millis;
 }

@@ -6,6 +6,16 @@
 
 using namespace std;
 
+unsigned int TimerThing::setTimeout(const unsigned long _millis, function<void()> lambda) {
+    timeouts.push_back({_millis, move(lambda)});
+    return timeouts.size();
+}
+
+void TimerThing::clearTimeout(unsigned int id) {
+    timeouts.erase(timeouts.begin() + id);
+}
+
+
 Thing TimerThing::defer(const unsigned long _millis, function<void()> lambda) {
     return defer_abs(_millis + millis(), move(lambda));
 }
@@ -34,4 +44,15 @@ void TimerThing::loop(const unsigned long _millis) {
             thing.lambda();
         }
     }
+
+    for (auto timeout: timeouts) {
+        if(_millis % timeout.timeout == 0) timeout.lambda();
+    }
 }
+
+TimerThing &TimerThing::Instance() {
+    static TimerThing instance;
+    return instance;
+}
+
+TimerThing::TimerThing() = default;
