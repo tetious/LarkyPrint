@@ -1,33 +1,25 @@
 #pragma once
 
-#include <Preferences.h>
-
 #include <utility>
 #include <iostream>
+#include <Preferences.h>
 #include "nvs.h"
+#include "Helpers.h"
 
 #define nvs_error(e) (((e)>ESP_ERR_NVS_BASE)?nvs_errors[(e)&~(ESP_ERR_NVS_BASE)]:nvs_errors[0])
-#define TYPE_STRING(T) template<> const char* TypeName<T>::name = #T
-
-template <typename T>
-struct TypeName { static const char *name; };
-
-struct EncoderConfiguration {
-    boolean isReversed{};
-    uint8_t stepsPerMenuMove = 1;
-    uint8_t stepsPerValueAdjustment = 1;
-};
-TYPE_STRING(EncoderConfiguration);
 
 class Configuration {
-    const vector<string> nvs_errors = {"OTHER", "NOT_INITIALIZED", "NOT_FOUND", "TYPE_MISMATCH", "READ_ONLY", "NOT_ENOUGH_SPACE",
-                                "INVALID_NAME", "INVALID_HANDLE", "REMOVE_FAILED", "KEY_TOO_LONG", "PAGE_FULL",
-                                "INVALID_STATE", "INVALID_LENGTH"};
+    const vector<string> nvs_errors = {"OTHER", "NOT_INITIALIZED", "NOT_FOUND", "TYPE_MISMATCH", "READ_ONLY",
+                                       "NOT_ENOUGH_SPACE",
+                                       "INVALID_NAME", "INVALID_HANDLE", "REMOVE_FAILED", "KEY_TOO_LONG", "PAGE_FULL",
+                                       "INVALID_STATE", "INVALID_LENGTH"};
 
     nvs_handle handle{};
 
     Configuration() {
         nvs_open("LarkyPrint", NVS_READWRITE, &handle);
+        Preferences pre;
+
     }
 
     ~Configuration() {
@@ -43,26 +35,35 @@ class Configuration {
 public:
 
     template<class T>
-    T getStruct() {
-        T _struct;
+    T get(const char *key) {
         size_t size;
-        auto err = nvs_get_blob(handle, TypeName<EncoderConfiguration>::name, &_struct, &size);
+        T thing;
+        auto err = nvs_get_blob(handle, key, nullptr, &size);
         if (err != ESP_OK) {
-            logError(err, string("getStruct->").append(TypeName<EncoderConfiguration>::name));
+            logError(err, string("get len->").append(key));
+        } else {
+            if(size != sizeof(T)) {
+                logError(0, string_format("get size mismatch for key %s: %u:%u", key, size, sizeof(T)));
+            }
+            err = nvs_get_blob(handle, key, &thing, &size);
+            if (err != ESP_OK) {
+                logError(err, string("get ->").append(key));
+            }
+            return thing;
         }
 
-        return _struct;
+        return nullptr;
     }
 
     template<class T>
-    void putStruct(T *value) {
-        auto err = nvs_set_blob(handle, TypeName<EncoderConfiguration>::name, value, sizeof(T));
+    void put(const char *key, T value) {
+        auto err = nvs_set_blob(handle, key, &value, sizeof(T));
         if (err != ESP_OK) {
-            logError(err, string("putStruct::nvs_set_blob->").append(TypeName<EncoderConfiguration>::name));
+            logError(err, string("put::nvs_set_blob->").append(key));
         } else {
             err = nvs_commit(handle);
             if (err != ESP_OK) {
-                logError(err, string("putStruct::nvs_commit->").append(TypeName<EncoderConfiguration>::name));
+                logError(err, string("put::nvs_commit->").append(key));
             }
         }
     }
