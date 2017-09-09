@@ -68,6 +68,10 @@ public:
         }
     }
 
+    Configuration(Configuration const &) = delete;
+
+    Configuration &operator=(Configuration const &) = delete;
+
     static Configuration &Instance() {
         static Configuration i;
         return i;

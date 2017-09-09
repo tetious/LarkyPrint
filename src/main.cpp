@@ -9,10 +9,15 @@
 #include "pins.h"
 #include "ScreenBuffer.h"
 #include "MenuManager.h"
+#include "Configuration.h"
+#include <ESPmDNS.h>
+#include <Update.h>
+#include "WebSocketManager.h"
+
+using namespace WebSocket;
 
 long lastUpdate = 0;
 
-WebSocketsServer webSocket = WebSocketsServer(80);
 ScreenBuffer buffer = ScreenBuffer();
 MenuManager menuManager = MenuManager(buffer);
 
@@ -38,9 +43,10 @@ IRAM_ATTR void read() {
 }
 
 auto sdSpi = SPIClass();
+
 IRAM_ATTR void sd_mode(bool espOwnsSd) {
 
-    if(espOwnsSd) {
+    if (espOwnsSd) {
         // trigger card removed signal and switch mux to ESP
         digitalWrite(sd_detect_out, HIGH);
         digitalWrite(sd_mux_s, LOW);
@@ -58,7 +64,6 @@ IRAM_ATTR void sd_mode(bool espOwnsSd) {
                 Serial.printf("SD Card Size: %lluMB\n", cardSize);
             }
         }
-
         Serial.println("The ESP now owns the SD card.");
     } else {
         SD.end();
@@ -69,67 +74,89 @@ IRAM_ATTR void sd_mode(bool espOwnsSd) {
     }
 }
 
-// TODO: rewrite all of this.
-IRAM_ATTR void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
-    static auto fileUploading = false;
-    static File file;
-    static bool sdMode = true;
-
-    switch (type) {
-        case WStype_DISCONNECTED:
-            Serial.printf("[%u] Disconnected!\r\n", num);
-            break;
-        case WStype_CONNECTED: {
-            IPAddress ip = webSocket.remoteIP(num);
-            Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", num, ip[0], ip[1], ip[2], ip[3], payload);
-        }
-            break;
-        case WStype_TEXT: {
-            Serial.printf("[%u] Got Text: %s\r\n", num, payload);
-
-            DynamicJsonBuffer jsonBuffer;
-            JsonObject &root = jsonBuffer.parseObject(payload);
-            if (root["op"] == "fileUploadStart") {
-                Serial.printf("Starting file upload for file %s.\r\n", root["name"].as<String>());
-                file = SD.open(root["name"].as<String>(), FILE_WRITE);
-                if (!file) {
-                    Serial.println("Failed to open file for writing");
-                    webSocket.sendTXT(num, "ERR"); // FIXME
-                } else {
-                    fileUploading = true;
-                }
-            } else if (root["op"] == "fileUploadComplete") {
-                Serial.println("Closing file.");
-                fileUploading = false;
-                file.close();
-            } else if (root["op"] == "menuClick") {
-                Serial.println("CLICK!");
-                menuManager.click();
-            } else if (root["op"] == "menuUp") {
-                Serial.println("UP!");
-                menuManager.up();
-            } else if (root["op"] == "menuDown") {
-                Serial.println("DOWN!");
-                menuManager.down();
-            } else if (root["op"] == "swapSD") {
-                Serial.println("SD SWAP!");
-                sdMode =!sdMode;
-                sd_mode(sdMode);
-            }
-            break;
-        }
-        case WStype_BIN: {
-            Serial.printf("[%u] get binary length: %u\r\n", num, length);
-
-            if (fileUploading) {
-                file.write(payload, length);
-                Serial.printf("fileUpload: Added %u bytes.\r\n", length);
-                webSocket.sendTXT(num, R"({"op": "fileUploadChunkAck"})");
-            }
-            break;
-        }
-    }
+void startScreenWatcher() {
+    attachInterrupt(lcd_clk, read, FALLING);
 }
+
+void stopScreenWatcher() {
+    detachInterrupt(lcd_clk);
+}
+
+void setupFirmwareUpdate() {
+    auto &wsm = WebSocketManager::Instance();
+    wsm.onOp("firmwareUpdateStart", [&](OperationMessage m) {
+        Serial.println("Starting firmware update.");
+        stopScreenWatcher();
+        if (!Update.begin(m.root["fileSize"].as<size_t>())) {
+            Serial.println("Update.begin error");
+            Update.printError(Serial);
+        } else {
+            Update.setMD5(m.root["md5"]);
+            wsm.attachBinaryHandler([&](BinaryMessage m) {
+                Serial.println("firmwareUpdate: got chunk");
+                auto written = Update.write(m.payload, m.payloadLength);
+                if(written > 0) {
+                    Serial.printf("firmwareUpdate: Added %u bytes. Update reports %u bytes.\r\n", m.payloadLength, written);
+                    wsm.sendText(m.connectionNumber, R"({"op": "firmwareUpdateChunkAck"})");
+                } else {
+                    Serial.println("Written was zero.");
+                    Update.printError(Serial);
+                }
+            });
+        }
+    });
+
+    wsm.onOp("firmwareUpdateComplete", [&](OperationMessage m) {
+        wsm.detachBinaryHandler();
+        // todo: better messaging
+        if (Update.end()) {
+            Serial.println("OTA done!");
+            if (Update.isFinished()) {
+                Serial.println("Update successfully completed. Rebooting.");
+                ESP.restart();
+            } else {
+                Serial.println("Update not finished? Something went wrong!");
+                Update.printError(Serial);
+                startScreenWatcher();
+            }
+        } else {
+            Serial.println("Error Occurred. Error #: " + String(Update.getError()));
+            Update.printError(Serial);
+            startScreenWatcher();
+        }
+    });
+}
+
+void setupUploadHandler() {
+    static File file;
+
+    // TODO:: make sure this doesn't get stuck (setup some kind of timeout)
+    auto &wsm = WebSocketManager::Instance();
+    wsm.onOp("fileUploadStart", [&](OperationMessage m) {
+        sd_mode(true);
+        Serial.printf("Starting file upload for file %s.\r\n", m.root["name"].as<String>());
+        file = SD.open(m.root["name"].as<String>(), FILE_WRITE);
+        if (!file) {
+            Serial.println("Failed to open file for writing");
+            //webSocket.sendTXT(num, "ERR"); // FIXME
+            sd_mode(false);
+        } else {
+            wsm.attachBinaryHandler([&](BinaryMessage m) {
+                file.write(m.payload, m.payloadLength);
+                Serial.printf("fileUpload: Added %u bytes.\r\n", m.payloadLength);
+                wsm.sendText(m.connectionNumber, R"({"op": "fileUploadChunkAck"})");
+            });
+        }
+    });
+
+    wsm.onOp("fileUploadComplete", [&](OperationMessage m) {
+        wsm.detachBinaryHandler();
+        Serial.println("Closing file.");
+        file.close();
+        sd_mode(false);
+    });
+}
+
 
 void setup() {
     Serial.begin(115200);
@@ -140,8 +167,9 @@ void setup() {
         delay(500);
         Serial.print(".");
     }
+
     Serial.println();
-    Serial.println("WiFi connected");
+    Serial.println("WiFi connected, OTA update ready.");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
 
@@ -151,25 +179,39 @@ void setup() {
     pinMode(lcd_clk, INPUT_PULLDOWN);
     pinMode(lcd_rs, INPUT_PULLDOWN);
 
-    webSocket.begin();
-    webSocket.onEvent(webSocketEvent);
+    setupUploadHandler();
+    setupFirmwareUpdate();
+    auto &wsm = WebSocketManager::Instance();
+    wsm.onOp("menuClick", [](OperationMessage m) {
+        Serial.println("CLICK!");
+        menuManager.click();
+    });
+    wsm.onOp("menuUp", [](OperationMessage m) {
+        Serial.println("UP!");
+        menuManager.up();
+    });
+    wsm.onOp("menuDown", [](OperationMessage m) {
+        Serial.println("DOWN!");
+        menuManager.down();
+    });
 
     pinMode(sd_detect_out, OUTPUT);
     pinMode(sd_mux_s, OUTPUT);
     sdSpi.begin(spi_clk, spi_miso, spi_mosi);
-    sd_mode(true);
+    sd_mode(false);
 
-    // do this last as maybe that will help with SD init? This is unproven.
-    attachInterrupt(lcd_clk, read, FALLING);
+    startScreenWatcher();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
 }
+
+
 
 void loop() {
     const auto _millis = millis();
     static unsigned long lastMillis = 0;
 
-    if(lastMillis != _millis) TimerThing::Instance().loop(_millis);
+    if (lastMillis != _millis) TimerThing::Instance().loop(_millis);
 
     if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
         String status;
@@ -178,15 +220,15 @@ void loop() {
         }
         // todo: this should probably be event driven and work more intelligently
         StaticJsonBuffer<200> json;
-        auto& root = json.createObject();
+        auto &root = json.createObject();
         root["op"] = "printerStatus";
         root["status"] = status;
         String out;
         root.printTo(out);
-        webSocket.broadcastTXT(out);
+        WebSocketManager::Instance().broadcast(out.c_str());
 
         lastUpdate = _millis;
     }
-    webSocket.loop();
+    WebSocketManager::Instance().loop();
     lastMillis = _millis;
 }
