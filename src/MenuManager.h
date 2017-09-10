@@ -20,8 +20,10 @@ public:
         digitalWrite(encoder_2, HIGH);
     }
 
-    void learn() {
+    // todo: rework so up and down are reliable even with buggy encoder config
 
+    void learn() {
+        // TODO: find Print to SD Card
     }
 
     void click() {

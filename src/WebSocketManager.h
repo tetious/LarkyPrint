@@ -67,8 +67,8 @@ public:
         webSocket.broadcastTXT(text.c_str());
     }
 
-    void sendText(uint8_t connectionNumber, const string &text) {
-        webSocket.sendTXT(connectionNumber, text.c_str());
+    void sendText(uint8_t connectionNumber, const char * text) {
+        webSocket.sendTXT(connectionNumber, text);
     }
 
     void loop() {

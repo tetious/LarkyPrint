@@ -93,10 +93,10 @@ void setupFirmwareUpdate() {
         } else {
             Update.setMD5(m.root["md5"]);
             wsm.attachBinaryHandler([&](BinaryMessage m) {
-                Serial.println("firmwareUpdate: got chunk");
                 auto written = Update.write(m.payload, m.payloadLength);
-                if(written > 0) {
-                    Serial.printf("firmwareUpdate: Added %u bytes. Update reports %u bytes.\r\n", m.payloadLength, written);
+                if (written > 0) {
+                    Serial.printf("firmwareUpdate: Added %u bytes. Update reports %u bytes.\r\n", m.payloadLength,
+                                  written);
                     wsm.sendText(m.connectionNumber, R"({"op": "firmwareUpdateChunkAck"})");
                 } else {
                     Serial.println("Written was zero.");
@@ -127,6 +127,39 @@ void setupFirmwareUpdate() {
     });
 }
 
+String buildSdFileList() {
+    DynamicJsonBuffer buf;
+    auto &root = buf.createObject();
+    root["op"] = "fileListing";
+    auto &fileList = root.createNestedArray("files");
+
+    File sdRoot = SD.open("/");
+    if (!sdRoot) {
+        Serial.println("Failed to open directory");
+    }
+    if (!sdRoot.isDirectory()) {
+        Serial.println("Not a directory");
+    }
+    if(sdRoot && sdRoot.isDirectory()) {
+        File file = sdRoot.openNextFile();
+        while (file) {
+            if (file.isDirectory()) {
+                // skip for now
+            } else {
+                auto &fileObj = fileList.createNestedObject();
+                fileObj["name"] = buf.strdup(file.name());
+                fileObj["size"] = file.size();
+            }
+            file = sdRoot.openNextFile();
+        }
+    }
+
+    String out;
+    root.printTo(out);
+    root.printTo(Serial);
+    return out;
+}
+
 void setupUploadHandler() {
     static File file;
 
@@ -153,6 +186,8 @@ void setupUploadHandler() {
         wsm.detachBinaryHandler();
         Serial.println("Closing file.");
         file.close();
+
+        wsm.sendText(m.connectionNumber, buildSdFileList().c_str());
         sd_mode(false);
     });
 }
@@ -194,6 +229,11 @@ void setup() {
         Serial.println("DOWN!");
         menuManager.down();
     });
+    wsm.onOp("fileListing", [&](OperationMessage m) {
+        sd_mode(true);
+        wsm.sendText(m.connectionNumber, buildSdFileList().c_str());
+        sd_mode(false);
+    });
 
     pinMode(sd_detect_out, OUTPUT);
     pinMode(sd_mux_s, OUTPUT);
@@ -204,7 +244,6 @@ void setup() {
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
 }
-
 
 
 void loop() {
