@@ -1,4 +1,6 @@
 #include "map"
+#include "WebSocketsServer.h"
+
 using namespace std::placeholders;
 namespace WebSocket {
     struct OperationMessage {
@@ -33,22 +35,23 @@ class WebSocketManager {
                 break;
             case WStype_CONNECTED: {
                 IPAddress ip = webSocket.remoteIP(connectionNumber);
-                Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", connectionNumber, ip[0], ip[1], ip[2], ip[3], payload);
+                Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", connectionNumber, ip[0], ip[1], ip[2],
+                              ip[3], payload);
             }
                 break;
             case WStype_TEXT: {
                 Serial.printf("[%u] Got Text: %s\r\n", connectionNumber, payload);
                 DynamicJsonBuffer jsonBuffer;
                 JsonObject &root = jsonBuffer.parseObject(payload);
-                const char* op = root["op"];
-                if(opcodeMap.count(op) > 0) {
+                const char *op = root["op"];
+                if (opcodeMap.count(op) > 0) {
                     opcodeMap[op](OperationMessage{root, connectionNumber});
                 }
                 break;
             }
             case WStype_BIN: {
                 Serial.printf("[%u] get binary length: %u\r\n", connectionNumber, length);
-                if(binaryHandler) {
+                if (binaryHandler) {
                     binaryHandler(BinaryMessage{connectionNumber, payload, length});
                 }
                 break;
@@ -67,7 +70,7 @@ public:
         webSocket.broadcastTXT(text.c_str());
     }
 
-    void sendText(uint8_t connectionNumber, const char * text) {
+    void sendText(uint8_t connectionNumber, const char *text) {
         webSocket.sendTXT(connectionNumber, text);
     }
 
@@ -76,7 +79,7 @@ public:
     }
 
     void attachBinaryHandler(function<void(BinaryMessage)> callback) {
-        if(binaryHandler != nullptr) {
+        if (binaryHandler != nullptr) {
             log_e("Called attachBinaryHandler while already attached!");
         } else {
             binaryHandler = callback;

@@ -1,6 +1,5 @@
 #include "Arduino.h"
 #include <WiFi.h>
-#include <WebSocketsServer.h>
 #include "SPI.h"
 #include "FS.h"
 #include "SD.h"
@@ -9,8 +8,6 @@
 #include "pins.h"
 #include "ScreenBuffer.h"
 #include "MenuManager.h"
-#include "Configuration.h"
-#include <ESPmDNS.h>
 #include <Update.h>
 #include "WebSocketManager.h"
 
@@ -140,7 +137,7 @@ String buildSdFileList() {
     if (!sdRoot.isDirectory()) {
         Serial.println("Not a directory");
     }
-    if(sdRoot && sdRoot.isDirectory()) {
+    if (sdRoot && sdRoot.isDirectory()) {
         File file = sdRoot.openNextFile();
         while (file) {
             if (file.isDirectory()) {
@@ -250,12 +247,16 @@ void loop() {
     const auto _millis = millis();
     static unsigned long lastMillis = 0;
 
-    if (lastMillis != _millis) TimerThing::Instance().loop(_millis);
+    if (lastMillis != _millis) { TimerThing::Instance().loop(_millis); }
 
     if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
         String status;
         for (auto chr : buffer.read()) {
-            if (chr > 31) status.concat(chr);
+            if (chr > 31) {
+                status.concat(chr);
+            } else {
+                status.concat(' ');
+            }
         }
         // todo: this should probably be event driven and work more intelligently
         StaticJsonBuffer<200> json;
