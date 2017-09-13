@@ -57,12 +57,12 @@ TimerThing &TimerThing::Instance() {
 
 TimerThing::TimerThing() {
     xTaskCreate([](void *o) {
-        auto lastMillis = millis();
+        TickType_t lastWakeTime;
+        const auto freq = 1 / portTICK_PERIOD_MS;
         while (true) {
-            if (lastMillis != millis()) {
-                static_cast<TimerThing *>(o)->loop(millis());
-            }
-            lastMillis = millis();
+            lastWakeTime = xTaskGetTickCount();
+            static_cast<TimerThing *>(o)->loop(millis());
+            vTaskDelayUntil(&lastWakeTime, freq);
         }
-    }, "TimerThing::Loop", 2048, this, 1, nullptr);
+    }, "tt_loop", 2048, this, 1, nullptr);
 }

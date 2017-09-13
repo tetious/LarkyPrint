@@ -148,8 +148,8 @@ void setupUploadHandler() {
     auto &wsm = WebSocketManager::Instance();
     wsm.onOp("fileUploadStart", [&](OperationMessage m) {
         sd_mode(true);
-        Serial.printf("Starting file upload for file %s.\r\n", m.root["name"].as<const char*>());
-        file = fopen(m.root["name"].as<const char*>(), "wb");
+        Serial.printf("Starting file upload for file %s.\r\n", m.root["name"].as<const char *>());
+        file = fopen(m.root["name"].as<const char *>(), "wb");
         if (file == nullptr) {
             Serial.println("Failed to open file for writing");
             //webSocket.sendTXT(num, "ERR"); // FIXME
@@ -209,6 +209,22 @@ void initWebsockets() {
     });
 }
 
+void initScreen() {
+    buffer.subUpdate([](ScreenBuffer * buf) {
+        String status;
+        for (auto chr : buf->read()) {
+            if (chr > 31) {
+                status.concat(chr);
+            } else {
+                status.concat(' ');
+            }
+        }
+        String out(R"({"op":"printerStatus", "status":"_"})");
+        out.replace("_", status);
+        WebSocketManager::Instance().broadcast(out.c_str());
+    });
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.setDebugOutput(true);
@@ -228,38 +244,16 @@ void setup() {
     initWifi();
     configTzTime("EST", "pool.ntp.org");
     initWebsockets();
+    initScreen();
     startScreenWatcher();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
 }
 
-
 void loop() {
     const auto _millis = millis();
     static unsigned long lastMillis = 0;
 
-    //if (lastMillis != _millis) { TimerThing::Instance().loop(_millis); }
-
-    if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
-        String status;
-        for (auto chr : buffer.read()) {
-            if (chr > 31) {
-                status.concat(chr);
-            } else {
-                status.concat(' ');
-            }
-        }
-        // todo: this should probably be event driven and work more intelligently
-        StaticJsonBuffer<200> json;
-        auto &root = json.createObject();
-        root["op"] = "printerStatus";
-        root["status"] = status;
-        String out;
-        root.printTo(out);
-        WebSocketManager::Instance().broadcast(out.c_str());
-
-        lastUpdate = _millis;
-    }
     WebSocketManager::Instance().loop();
     lastMillis = _millis;
 }

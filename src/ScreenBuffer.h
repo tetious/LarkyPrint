@@ -18,14 +18,41 @@ private:
     array<char, SIZE> buffer{};
     byte cursorPos = 0;
     byte leftToSkip = 0;
+    unsigned long lastUpdate = 0;
+    bool updateSent = true;
+    vector<function<void(ScreenBuffer *)>> updateCallbacks{};
+
+    void updateTimeout() {
+        auto current = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        if (!updateSent && current - lastUpdate > 100) {
+            for (auto cb: updateCallbacks) {
+                cb(this);
+            }
+            updateSent = true;
+        }
+    }
+
 public:
     ScreenBuffer() {
         buffer.fill(' ');
+        xTaskCreate([](void *o) {
+            TickType_t lastWakeTime;
+            const auto freq = 100 / portTICK_PERIOD_MS;
+            while (true) {
+                lastWakeTime = xTaskGetTickCount();
+                static_cast<ScreenBuffer *>(o)->updateTimeout();
+                vTaskDelayUntil(&lastWakeTime, freq);
+            }
+        }, "sb_loop", 2048, this, 1, nullptr);
+    }
+
+    void subUpdate(function<void(ScreenBuffer *)> cb) {
+        updateCallbacks.push_back(cb);
     }
 
     void write(lcd_cap &cap) {
 
-        if(leftToSkip > 0) {
+        if (leftToSkip > 0) {
             leftToSkip--;
             return;
         }
@@ -52,12 +79,14 @@ public:
             }
             return;
         }
-        if(cursorPos > SIZE) {
+        if (cursorPos > SIZE) {
             Serial.printf("CursorPos is too high!! %u", cursorPos);
             return;
         }
         buffer[cursorPos] = cap.data;
         cursorPos++;
+        lastUpdate = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
+        updateSent = false;
     }
 
     array<char, SIZE> read() {
