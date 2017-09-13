@@ -46,7 +46,7 @@ void TimerThing::loop(const unsigned long _millis) {
     }
 
     for (auto timeout: timeouts) {
-        if(_millis % timeout.timeout == 0) timeout.lambda();
+        if (_millis % timeout.timeout == 0) { timeout.lambda(); }
     }
 }
 
@@ -55,4 +55,14 @@ TimerThing &TimerThing::Instance() {
     return instance;
 }
 
-TimerThing::TimerThing() = default;
+TimerThing::TimerThing() {
+    xTaskCreate([](void *o) {
+        auto lastMillis = millis();
+        while (true) {
+            if (lastMillis != millis()) {
+                static_cast<TimerThing *>(o)->loop(millis());
+            }
+            lastMillis = millis();
+        }
+    }, "TimerThing::Loop", 2048, this, 1, nullptr);
+}
