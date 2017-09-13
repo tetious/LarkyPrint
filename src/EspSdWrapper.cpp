@@ -2,15 +2,15 @@
 #include "EspSdWrapper.h"
 #include "driver/sdspi_host.h"
 #include "esp_vfs_fat.h"
-#include <stdio.h>
-#include <sys/types.h>
 #include <dirent.h>
-#include <driver/sdmmc_types.h>
 
 using namespace std;
 
 bool EspSdWrapper::mount(uint8_t miso, uint8_t mosi, uint8_t clk, uint8_t cs) {
+    if(mounted) { return true; }
+
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.max_freq_khz = 10000;
     sdspi_slot_config_t slot_config = SDSPI_SLOT_CONFIG_DEFAULT();
     slot_config.gpio_miso = static_cast<gpio_num_t>(miso);
     slot_config.gpio_mosi = static_cast<gpio_num_t>(mosi);
@@ -22,8 +22,7 @@ bool EspSdWrapper::mount(uint8_t miso, uint8_t mosi, uint8_t clk, uint8_t cs) {
             .max_files = 5
     };
 
-    sdmmc_card_t *card;
-    esp_err_t ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config, &card);
+    esp_err_t ret = esp_vfs_fat_sdmmc_mount("/sd", &host, &slot_config, &mount_config, nullptr);
 
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
@@ -33,20 +32,21 @@ bool EspSdWrapper::mount(uint8_t miso, uint8_t mosi, uint8_t clk, uint8_t cs) {
         }
         return false;
     }
-
+    mounted = true;
     return true;
 }
 
-std::vector<string> EspSdWrapper::files(const char *dir) {
+std::vector<FileInfo> EspSdWrapper::files(const char *dir) {
     auto *dp = opendir(dir);
     struct dirent *ep;
-    vector<string> files;
+    vector<FileInfo> files;
 
     if (dp != nullptr) {
         while ((ep = readdir(dp))) {
-            files.emplace_back(ep->d_name);
+            FILINFO sstat{};
+            f_stat(ep->d_name, &sstat);
+            files.push_back({strdup(ep->d_name), static_cast<uint32_t>(sstat.fsize)});
         }
-
         closedir(dp);
     } else {
         log_e("Couldn't open the directory %s", dir);

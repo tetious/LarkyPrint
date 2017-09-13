@@ -1,8 +1,5 @@
 #include "Arduino.h"
 #include <WiFi.h>
-#include "SPI.h"
-#include "FS.h"
-#include "SD.h"
 #include <ArduinoJson.h>
 #include "secure.h"
 #include "pins.h"
@@ -10,6 +7,7 @@
 #include "MenuManager.h"
 #include <Update.h>
 #include "WebSocketManager.h"
+#include "EspSdWrapper.h"
 
 using namespace WebSocket;
 
@@ -17,6 +15,7 @@ long lastUpdate = 0;
 
 ScreenBuffer buffer = ScreenBuffer();
 MenuManager menuManager = MenuManager(buffer);
+EspSdWrapper sd;
 
 IRAM_ATTR void read() {
     static bool firstHalf = true;
@@ -39,44 +38,44 @@ IRAM_ATTR void read() {
     firstHalf = !firstHalf;
 }
 
-auto sdSpi = SPIClass();
-
-IRAM_ATTR void sd_mode(bool espOwnsSd) {
-
-    if (espOwnsSd) {
-        // trigger card removed signal and switch mux to ESP
-        digitalWrite(sd_detect_out, HIGH);
-        digitalWrite(sd_mux_s, LOW);
-        delay(100);
-        if (!SD.begin(sd_spi_ss, sdSpi)) {
-            Serial.println("Card Mount Failed");
-            // FIXME: if the SD card fails to mount, subsequent attempts crash the board
-        } else {
-            uint8_t cardType = SD.cardType();
-
-            if (cardType == CARD_NONE) {
-                Serial.println("No SD card attached");
-            } else {
-                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-                Serial.printf("SD Card Size: %lluMB\n", cardSize);
-            }
-        }
-        Serial.println("The ESP now owns the SD card.");
-    } else {
-        SD.end();
-        // switch mux to printer and trigger card insert
-        digitalWrite(sd_mux_s, HIGH);
-        digitalWrite(sd_detect_out, LOW);
-        Serial.println("The printer now owns the SD card.");
-    }
-}
-
 void startScreenWatcher() {
     attachInterrupt(lcd_clk, read, FALLING);
 }
 
 void stopScreenWatcher() {
     detachInterrupt(lcd_clk);
+}
+
+IRAM_ATTR void sd_mode(bool espOwnsSd) {
+    //stopScreenWatcher();
+    if (espOwnsSd) {
+        // trigger card removed signal and switch mux to ESP
+        digitalWrite(sd_detect_out, HIGH);
+        digitalWrite(sd_mux_s, LOW);
+        delay(100);
+        //TODO: we probably want to break this up into SPI init and mount
+        if (!sd.mount(spi_miso, spi_mosi, spi_clk, sd_spi_ss)) {
+            Serial.println("Card Mount Failed");
+            // FIXME: if the SD card fails to mount, subsequent attempts crash the board
+        } else {
+//            uint8_t cardType = SD.cardType();
+//
+//            if (cardType == CARD_NONE) {
+//                Serial.println("No SD card attached");
+//            } else {
+//                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+//                Serial.printf("SD Card Size: %lluMB\n", cardSize);
+//            }
+        }
+        Serial.println("The ESP now owns the SD card.");
+    } else {
+        //SD.end();
+        // switch mux to printer and trigger card insert
+        digitalWrite(sd_mux_s, HIGH);
+        digitalWrite(sd_detect_out, LOW);
+        Serial.println("The printer now owns the SD card.");
+    }
+    //startScreenWatcher();
 }
 
 void setupFirmwareUpdate() {
@@ -130,25 +129,10 @@ String buildSdFileList() {
     root["op"] = "fileListing";
     auto &fileList = root.createNestedArray("files");
 
-    File sdRoot = SD.open("/");
-    if (!sdRoot) {
-        Serial.println("Failed to open directory");
-    }
-    if (!sdRoot.isDirectory()) {
-        Serial.println("Not a directory");
-    }
-    if (sdRoot && sdRoot.isDirectory()) {
-        File file = sdRoot.openNextFile();
-        while (file) {
-            if (file.isDirectory()) {
-                // skip for now
-            } else {
-                auto &fileObj = fileList.createNestedObject();
-                fileObj["name"] = buf.strdup(file.name());
-                fileObj["size"] = file.size();
-            }
-            file = sdRoot.openNextFile();
-        }
+    for (auto file: sd.files("/sd")) {
+        auto &fileObj = fileList.createNestedObject();
+        fileObj["name"] = buf.strdup(file.name);
+        fileObj["size"] = file.size;
     }
 
     String out;
@@ -158,21 +142,21 @@ String buildSdFileList() {
 }
 
 void setupUploadHandler() {
-    static File file;
+    static FILE *file = nullptr;
 
     // TODO:: make sure this doesn't get stuck (setup some kind of timeout)
     auto &wsm = WebSocketManager::Instance();
     wsm.onOp("fileUploadStart", [&](OperationMessage m) {
         sd_mode(true);
-        Serial.printf("Starting file upload for file %s.\r\n", m.root["name"].as<String>());
-        file = SD.open(m.root["name"].as<String>(), FILE_WRITE);
-        if (!file) {
+        Serial.printf("Starting file upload for file %s.\r\n", m.root["name"].as<const char*>());
+        file = fopen(m.root["name"].as<const char*>(), "wb");
+        if (file == nullptr) {
             Serial.println("Failed to open file for writing");
             //webSocket.sendTXT(num, "ERR"); // FIXME
             sd_mode(false);
         } else {
             wsm.attachBinaryHandler([&](BinaryMessage m) {
-                file.write(m.payload, m.payloadLength);
+                fwrite(m.payload, m.payloadLength, 1, file); // this is so flipping baffling
                 Serial.printf("fileUpload: Added %u bytes.\r\n", m.payloadLength);
                 wsm.sendText(m.connectionNumber, R"({"op": "fileUploadChunkAck"})");
             });
@@ -182,17 +166,13 @@ void setupUploadHandler() {
     wsm.onOp("fileUploadComplete", [&](OperationMessage m) {
         wsm.detachBinaryHandler();
         Serial.println("Closing file.");
-        file.close();
-
-        wsm.sendText(m.connectionNumber, buildSdFileList().c_str());
+        fclose(file);
+        file = nullptr;
         sd_mode(false);
     });
 }
 
-
-void setup() {
-    Serial.begin(115200);
-    Serial.setDebugOutput(true);
+void initWifi() {
     WiFi.begin(ssid, password);
 
     while (WiFi.status() != WL_CONNECTED) {
@@ -204,13 +184,9 @@ void setup() {
     Serial.println("WiFi connected, OTA update ready.");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
+}
 
-    for (auto lcd_pin : lcd_pins) {
-        pinMode(lcd_pin, INPUT_PULLDOWN);
-    }
-    pinMode(lcd_clk, INPUT_PULLDOWN);
-    pinMode(lcd_rs, INPUT_PULLDOWN);
-
+void initWebsockets() {
     setupUploadHandler();
     setupFirmwareUpdate();
     auto &wsm = WebSocketManager::Instance();
@@ -231,12 +207,27 @@ void setup() {
         wsm.sendText(m.connectionNumber, buildSdFileList().c_str());
         sd_mode(false);
     });
+}
+
+void setup() {
+    Serial.begin(115200);
+    Serial.setDebugOutput(true);
+
+    for (auto lcd_pin : lcd_pins) {
+        pinMode(lcd_pin, INPUT_PULLDOWN);
+    }
+    pinMode(lcd_clk, INPUT_PULLDOWN);
+    pinMode(lcd_rs, INPUT_PULLDOWN);
 
     pinMode(sd_detect_out, OUTPUT);
     pinMode(sd_mux_s, OUTPUT);
-    sdSpi.begin(spi_clk, spi_miso, spi_mosi);
+    //sdSpi.begin(spi_clk, spi_miso, spi_mosi);
     sd_mode(false);
 
+    //digitalWrite(spi_clk, HIGH);
+    initWifi();
+    configTzTime("EST", "pool.ntp.org");
+    initWebsockets();
     startScreenWatcher();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
@@ -247,7 +238,7 @@ void loop() {
     const auto _millis = millis();
     static unsigned long lastMillis = 0;
 
-    if (lastMillis != _millis) { TimerThing::Instance().loop(_millis); }
+    //if (lastMillis != _millis) { TimerThing::Instance().loop(_millis); }
 
     if (lastUpdate == 0 || _millis - lastUpdate > 1000) {
         String status;
