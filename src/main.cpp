@@ -210,17 +210,18 @@ void initWebsockets() {
 }
 
 void initScreen() {
-    buffer.subUpdate([](ScreenBuffer * buf) {
-        String status;
-        for (auto chr : buf->read()) {
-            if (chr > 31) {
-                status.concat(chr);
-            } else {
-                status.concat(' ');
-            }
+    buffer.subUpdate([](ScreenBuffer *buf) {
+        const size_t bufferSize = JSON_ARRAY_SIZE(80) + JSON_OBJECT_SIZE(2) + 380;
+        DynamicJsonBuffer jsonBuffer(bufferSize);
+        auto &obj = jsonBuffer.createObject();
+        obj["op"] = "screenUpdate";
+        auto &screenArray = obj.createNestedArray("s");
+        for (auto i: buf->read()) {
+            screenArray.add(int(i));
         }
-        String out(R"({"op":"printerStatus", "status":"_"})");
-        out.replace("_", status);
+
+        String out;
+        obj.printTo(out);
         WebSocketManager::Instance().broadcast(out.c_str());
     });
 }
