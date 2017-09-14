@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include "Thing.h"
 #include "TimerThing.h"
 #include "Arduino.h"
@@ -17,7 +18,7 @@ void TimerThing::clearTimeout(unsigned int id) {
 
 
 Thing TimerThing::defer(const unsigned long _millis, function<void()> lambda) {
-    return defer_abs(_millis + millis(), move(lambda));
+    return defer_abs(_millis + xTaskGetTickCount() / portTICK_PERIOD_MS, move(lambda));
 }
 
 Thing TimerThing::defer_abs(const unsigned long _millis, function<void()> lambda) {
@@ -29,24 +30,27 @@ Thing TimerThing::defer_abs(const unsigned long _millis, function<void()> lambda
 void TimerThing::loop(const unsigned long _millis) {
     vector<Thing> triggeredThings;
     vector<Thing> new_first;
+    static auto inLoop = false;
+    if (!inLoop) {
+        inLoop = true;
 
-    partition_copy(things.begin(),
-                   things.end(),
-                   back_inserter(triggeredThings),
-                   back_inserter(new_first),
-                   [&](Thing it) { return it.when <= _millis; });
-    things = move(new_first);
-
-    for (auto thing : triggeredThings) {
-        if (thing.lambda == nullptr) {
-            Serial.println("NULL! :(");
-        } else {
-            thing.lambda();
+        auto it = things.begin();
+        while (it != things.end()) {
+            if(it->when <= _millis) {
+                it->lambda();
+                it = things.erase(it);
+            } else {
+                it++;
+            }
         }
-    }
 
-    for (auto timeout: timeouts) {
-        if (_millis % timeout.timeout == 0) { timeout.lambda(); }
+        for (auto timeout: timeouts) {
+            if (_millis % timeout.timeout == 0) { timeout.lambda(); }
+        }
+
+        inLoop = false;
+    } else {
+        Serial.printf("TimerThing::loop while already looping [%u]!\r\n", _millis);
     }
 }
 
@@ -61,7 +65,7 @@ TimerThing::TimerThing() {
         const auto freq = 1 / portTICK_PERIOD_MS;
         while (true) {
             lastWakeTime = xTaskGetTickCount();
-            static_cast<TimerThing *>(o)->loop(millis());
+            static_cast<TimerThing *>(o)->loop(lastWakeTime / portTICK_PERIOD_MS);
             vTaskDelayUntil(&lastWakeTime, freq);
         }
     }, "tt_loop", 2048, this, 1, nullptr);
