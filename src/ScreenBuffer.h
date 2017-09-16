@@ -23,8 +23,7 @@ private:
     vector<function<void(ScreenBuffer *)>> updateCallbacks{};
 
     void updateTimeout() {
-        auto current = xTaskGetTickCount() * portTICK_PERIOD_MS;
-        if (!updateSent && current - lastUpdate > 100) {
+        if (!updateSent && millis() - lastUpdate > 100) {
             for (auto cb: updateCallbacks) {
                 cb(this);
             }
@@ -32,25 +31,7 @@ private:
         }
     }
 
-public:
-    ScreenBuffer() {
-        buffer.fill(' ');
-        xTaskCreate([](void *o) {
-            TickType_t lastWakeTime;
-            const auto freq = 100 / portTICK_PERIOD_MS;
-            while (true) {
-                lastWakeTime = xTaskGetTickCount();
-                static_cast<ScreenBuffer *>(o)->updateTimeout();
-                vTaskDelayUntil(&lastWakeTime, freq);
-            }
-        }, "sb_loop", 2048, this, 1, nullptr);
-    }
-
-    void subUpdate(function<void(ScreenBuffer *)> cb) {
-        updateCallbacks.push_back(cb);
-    }
-
-    void write(lcd_cap &cap) {
+    IRAM_ATTR void write(lcd_cap &cap) {
 
         if (leftToSkip > 0) {
             leftToSkip--;
@@ -87,6 +68,53 @@ public:
         cursorPos++;
         lastUpdate = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
         updateSent = false;
+    }
+
+    IRAM_ATTR void readScreen() {
+        static bool firstHalf = true;
+        static lcd_cap current = lcd_cap();
+
+        if (digitalRead(lcd_rs) == 0) {
+            current.cmd = true;
+        }
+
+        // full byte is broken into two, so stuff them into the correct place
+        for (int pin = 0; pin < sizeof(lcd_pins); pin++) {
+            current.data |= (digitalRead(lcd_pins[pin]) << pin + (firstHalf ? 4 : 0));
+        }
+
+        if (!firstHalf) {
+            write(current);
+            current = lcd_cap();
+        }
+
+        firstHalf = !firstHalf;
+    }
+
+public:
+    ScreenBuffer() {
+        buffer.fill(' ');
+        xTaskCreate([](void *o) {
+            TickType_t lastWakeTime;
+            const auto freq = 100 / portTICK_PERIOD_MS;
+            while (true) {
+                lastWakeTime = xTaskGetTickCount();
+                static_cast<ScreenBuffer *>(o)->updateTimeout();
+                vTaskDelayUntil(&lastWakeTime, freq);
+            }
+        }, "sb_loop", 2048, this, 1, nullptr);
+    }
+
+    void subUpdate(function<void(ScreenBuffer *)> cb) {
+        updateCallbacks.push_back(cb);
+    }
+
+    void startScreenWatcher() {
+        attachInterrupt(lcd_clk, readScreen, FALLING);
+    }
+
+    void stopScreenWatcher() {
+        detachInterrupt(lcd_clk);
     }
 
     array<char, SIZE> read() {

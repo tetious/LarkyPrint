@@ -13,40 +13,11 @@ using namespace WebSocket;
 
 long lastUpdate = 0;
 
-ScreenBuffer buffer = ScreenBuffer();
-MenuManager menuManager = MenuManager(buffer);
+ScreenBuffer screen = ScreenBuffer();
+MenuManager menuManager = MenuManager(screen);
 EspSdWrapper sd;
 
-IRAM_ATTR void read() {
-    static bool firstHalf = true;
-    static lcd_cap current = lcd_cap();
-
-    if (digitalRead(lcd_rs) == 0) {
-        current.cmd = true;
-    }
-
-    // full byte is broken into two, so stuff them into the correct place
-    for (int pin = 0; pin < sizeof(lcd_pins); pin++) {
-        current.data |= (digitalRead(lcd_pins[pin]) << pin + (firstHalf ? 4 : 0));
-    }
-
-    if (!firstHalf) {
-        buffer.write(current);
-        current = lcd_cap();
-    }
-
-    firstHalf = !firstHalf;
-}
-
-void startScreenWatcher() {
-    attachInterrupt(lcd_clk, read, FALLING);
-}
-
-void stopScreenWatcher() {
-    detachInterrupt(lcd_clk);
-}
-
-IRAM_ATTR void sd_mode(bool espOwnsSd) {
+void sd_mode(bool espOwnsSd) {
     //stopScreenWatcher();
     if (espOwnsSd) {
         // trigger card removed signal and switch mux to ESP
@@ -82,7 +53,7 @@ void setupFirmwareUpdate() {
     auto &wsm = WebSocketManager::Instance();
     wsm.onOp("firmwareUpdateStart", [&](OperationMessage m) {
         Serial.println("Starting firmware update.");
-        stopScreenWatcher();
+        screen.stopScreenWatcher();
         if (!Update.begin(m.root["fileSize"].as<size_t>())) {
             Serial.println("Update.begin error");
             Update.printError(Serial);
@@ -113,12 +84,12 @@ void setupFirmwareUpdate() {
             } else {
                 Serial.println("Update not finished? Something went wrong!");
                 Update.printError(Serial);
-                startScreenWatcher();
+                screen.startScreenWatcher();
             }
         } else {
             Serial.println("Error Occurred. Error #: " + String(Update.getError()));
             Update.printError(Serial);
-            startScreenWatcher();
+            screen.startScreenWatcher();
         }
     });
 }
@@ -209,8 +180,8 @@ void initWebsockets() {
     });
 }
 
-void initScreen() {
-    buffer.subUpdate([](ScreenBuffer *buf) {
+void initScreenEvents() {
+    screen.subUpdate([](ScreenBuffer *buf) {
         const size_t bufferSize = JSON_ARRAY_SIZE(80) + JSON_OBJECT_SIZE(2) + 380;
         DynamicJsonBuffer jsonBuffer(bufferSize);
         auto &obj = jsonBuffer.createObject();
@@ -245,8 +216,8 @@ void setup() {
     initWifi();
     configTzTime("EST", "pool.ntp.org");
     initWebsockets();
-    initScreen();
-    startScreenWatcher();
+    initScreenEvents();
+    screen.startScreenWatcher();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
 }
