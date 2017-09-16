@@ -1,58 +1,77 @@
+#include <utility>
+
 #include "map"
-#include "WebSocketsServer.h"
+#include <ESPAsyncWebServer.h>
+#include <AsyncWebSocket.h>
 
 using namespace std::placeholders;
 namespace WebSocket {
     struct OperationMessage {
+        AsyncWebSocket *server;
+        AsyncWebSocketClient *client;
         JsonObject &root;
-        uint8_t connectionNumber;
     };
 
     struct BinaryMessage {
-        uint8_t connectionNumber;
+        AsyncWebSocket *server;
+        AsyncWebSocketClient *client;
         uint8_t *payload;
         size_t payloadLength;
     };
 }
 using namespace WebSocket;
 
+typedef function<void(OperationMessage)> OperationMessageCallback;
+typedef function<void(BinaryMessage)> BinaryMessageCallback;
+
 class WebSocketManager {
 
-    WebSocketManager() : webSocket(80) {
-        webSocket.onEvent(std::bind(&WebSocketManager::webSocketEvent, this, _1, _2, _3, _4));
-        webSocket.begin();
+    WebSocketManager() : webSocket("/ws"), server(80) {
+        webSocket.onEvent(std::bind(&WebSocketManager::webSocketEvent, this, _1, _2, _3, _4, _5, _6));
+        server.addHandler(&webSocket);
+        server.begin();
     }
 
-    WebSocketsServer webSocket;
-    std::map<string, function<void(OperationMessage)>> opcodeMap{};
-    function<void(BinaryMessage)> binaryHandler = nullptr;
+    AsyncWebServer server;
+    AsyncWebSocket webSocket;
 
-    void webSocketEvent(uint8_t connectionNumber, WStype_t type, uint8_t *payload, size_t length) {
+    std::map<string, OperationMessageCallback> opcodeMap{};
+    BinaryMessageCallback binaryHandler = nullptr;
+
+    void
+    webSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data,
+                   size_t len) {
         static bool sdMode = true;
         switch (type) {
-            case WStype_DISCONNECTED:
-                Serial.printf("[%u] Disconnected!\r\n", connectionNumber);
+            case WS_EVT_DISCONNECT:
+                Serial.printf("[%u] Disconnected!\r\n", client->id());
                 break;
-            case WStype_CONNECTED: {
-                IPAddress ip = webSocket.remoteIP(connectionNumber);
-                Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", connectionNumber, ip[0], ip[1], ip[2],
-                              ip[3], payload);
+            case WS_EVT_CONNECT: {
+                auto ip = client->remoteIP();
+                Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", client->id(), ip[0], ip[1], ip[2],
+                              ip[3], server->url());
             }
                 break;
-            case WStype_TEXT: {
-                Serial.printf("[%u] Got Text: %s\r\n", connectionNumber, payload);
-                DynamicJsonBuffer jsonBuffer;
-                JsonObject &root = jsonBuffer.parseObject(payload);
-                const char *op = root["op"];
-                if (opcodeMap.count(op) > 0) {
-                    opcodeMap[op](OperationMessage{root, connectionNumber});
+            case WS_EVT_DATA: {
+                auto *info = static_cast<AwsFrameInfo *>(arg);
+                if (info->final && info->index == 0 && info->len == len) {
+                    Serial.println("Final.");
                 }
-                break;
-            }
-            case WStype_BIN: {
-                Serial.printf("[%u] get binary length: %u\r\n", connectionNumber, length);
-                if (binaryHandler) {
-                    binaryHandler(BinaryMessage{connectionNumber, payload, length});
+
+                if (info->opcode == WS_TEXT) {
+                    data[len] = 0;
+                    Serial.printf("[%u] Got Text: %s\r\n", client->id(), data);
+                    DynamicJsonBuffer jsonBuffer;
+                    JsonObject &root = jsonBuffer.parseObject(data);
+                    const char *op = root["op"];
+                    if (opcodeMap.count(op) > 0) {
+                        opcodeMap[op](OperationMessage{server, client, root});
+                    }
+                } else {
+                    Serial.printf("[%u] get binary length: %u\r\n", client->id(), len);
+                    if (binaryHandler) {
+                        binaryHandler(BinaryMessage{server, client, data, len});
+                    }
                 }
                 break;
             }
@@ -62,27 +81,19 @@ class WebSocketManager {
 
 public:
 
-    void onOp(const string &opCode, function<void(OperationMessage)> callback) {
-        opcodeMap[opCode] = callback;
+    void onOp(const string &opCode, OperationMessageCallback callback) {
+        opcodeMap[opCode] = std::move(callback);
     }
 
-    void broadcast(const string &text) {
-        webSocket.broadcastTXT(text.c_str());
-    }
-
-    void sendText(uint8_t connectionNumber, const char *text) {
-        webSocket.sendTXT(connectionNumber, text);
-    }
-
-    void loop() {
-        webSocket.loop(); // todo: use async
+    void broadcast(const char *text) {
+        webSocket.textAll(text);
     }
 
     void attachBinaryHandler(function<void(BinaryMessage)> callback) {
         if (binaryHandler != nullptr) {
             log_e("Called attachBinaryHandler while already attached!");
         } else {
-            binaryHandler = callback;
+            binaryHandler = std::move(callback);
         }
     }
 

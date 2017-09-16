@@ -8,13 +8,11 @@
 #include <Update.h>
 #include "WebSocketManager.h"
 #include "EspSdWrapper.h"
+#include "ScreenWatcher.h"
 
 using namespace WebSocket;
 
-long lastUpdate = 0;
-
-ScreenBuffer screen = ScreenBuffer();
-MenuManager menuManager = MenuManager(screen);
+MenuManager menuManager = MenuManager(ScreenWatcher::screenBuffer);
 EspSdWrapper sd;
 
 void sd_mode(bool espOwnsSd) {
@@ -53,7 +51,7 @@ void setupFirmwareUpdate() {
     auto &wsm = WebSocketManager::Instance();
     wsm.onOp("firmwareUpdateStart", [&](OperationMessage m) {
         Serial.println("Starting firmware update.");
-        screen.stopScreenWatcher();
+        ScreenWatcher::stop();
         if (!Update.begin(m.root["fileSize"].as<size_t>())) {
             Serial.println("Update.begin error");
             Update.printError(Serial);
@@ -64,7 +62,7 @@ void setupFirmwareUpdate() {
                 if (written > 0) {
                     Serial.printf("firmwareUpdate: Added %u bytes. Update reports %u bytes.\r\n", m.payloadLength,
                                   written);
-                    wsm.sendText(m.connectionNumber, R"({"op": "firmwareUpdateChunkAck"})");
+                    m.client->text(R"({"op": "firmwareUpdateChunkAck"})");
                 } else {
                     Serial.println("Written was zero.");
                     Update.printError(Serial);
@@ -84,12 +82,12 @@ void setupFirmwareUpdate() {
             } else {
                 Serial.println("Update not finished? Something went wrong!");
                 Update.printError(Serial);
-                screen.startScreenWatcher();
+                ScreenWatcher::start();
             }
         } else {
             Serial.println("Error Occurred. Error #: " + String(Update.getError()));
             Update.printError(Serial);
-            screen.startScreenWatcher();
+            ScreenWatcher::start();
         }
     });
 }
@@ -129,7 +127,7 @@ void setupUploadHandler() {
             wsm.attachBinaryHandler([&](BinaryMessage m) {
                 fwrite(m.payload, m.payloadLength, 1, file); // this is so flipping baffling
                 Serial.printf("fileUpload: Added %u bytes.\r\n", m.payloadLength);
-                wsm.sendText(m.connectionNumber, R"({"op": "fileUploadChunkAck"})");
+                m.client->text(R"({"op": "fileUploadChunkAck"})");
             });
         }
     });
@@ -173,15 +171,15 @@ void initWebsockets() {
         Serial.println("DOWN!");
         menuManager.down();
     });
-    wsm.onOp("fileListing", [&](OperationMessage m) {
+    wsm.onOp("fileListing", [](OperationMessage m) {
         sd_mode(true);
-        wsm.sendText(m.connectionNumber, buildSdFileList().c_str());
+        m.client->text(buildSdFileList().c_str());
         sd_mode(false);
     });
 }
 
 void initScreenEvents() {
-    screen.subUpdate([](ScreenBuffer *buf) {
+    ScreenWatcher::screenBuffer.subUpdate([](ScreenBuffer *buf) {
         const size_t bufferSize = JSON_ARRAY_SIZE(80) + JSON_OBJECT_SIZE(2) + 380;
         DynamicJsonBuffer jsonBuffer(bufferSize);
         auto &obj = jsonBuffer.createObject();
@@ -217,15 +215,10 @@ void setup() {
     configTzTime("EST", "pool.ntp.org");
     initWebsockets();
     initScreenEvents();
-    screen.startScreenWatcher();
+    ScreenWatcher::start();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
 }
 
 void loop() {
-    const auto _millis = millis();
-    static unsigned long lastMillis = 0;
-
-    WebSocketManager::Instance().loop();
-    lastMillis = _millis;
 }

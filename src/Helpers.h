@@ -20,3 +20,20 @@ std::string string_format(const std::string fmt_str, ...) {
     }
     return std::string(formatted.get());
 }
+template <typename T>
+struct Callback;
+
+template <typename Ret, typename... Params>
+struct Callback<Ret(Params...)> {
+    template <typename... Args>
+    static Ret callback(Args... args) { return func(args...); }
+    static std::function<Ret(Params...)> func;
+};
+
+typedef void (*voidCCallback)();
+template<typename T>
+voidCCallback makeCCallback(void (T::*method)(),T* r){
+    Callback<void()>::func = std::bind(method, r);
+    void (*c_function_pointer)() = static_cast<decltype(c_function_pointer)>(Callback<void()>::callback);
+    return c_function_pointer;
+}
