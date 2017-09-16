@@ -14,6 +14,8 @@ using namespace WebSocket;
 
 MenuManager menuManager = MenuManager(ScreenWatcher::screenBuffer);
 EspSdWrapper sd;
+AsyncWebServer webServer{80};
+WebSocketManager wsm{webServer};
 
 void sd_mode(bool espOwnsSd) {
     //stopScreenWatcher();
@@ -21,7 +23,6 @@ void sd_mode(bool espOwnsSd) {
         // trigger card removed signal and switch mux to ESP
         digitalWrite(sd_detect_out, HIGH);
         digitalWrite(sd_mux_s, LOW);
-        delay(100);
         //TODO: we probably want to break this up into SPI init and mount
         if (!sd.mount(spi_miso, spi_mosi, spi_clk, sd_spi_ss)) {
             Serial.println("Card Mount Failed");
@@ -48,7 +49,6 @@ void sd_mode(bool espOwnsSd) {
 }
 
 void setupFirmwareUpdate() {
-    auto &wsm = WebSocketManager::Instance();
     wsm.onOp("firmwareUpdateStart", [&](OperationMessage m) {
         Serial.println("Starting firmware update.");
         ScreenWatcher::stop();
@@ -92,7 +92,7 @@ void setupFirmwareUpdate() {
     });
 }
 
-String buildSdFileList() {
+void buildSdFileList(AsyncResponseStream *response) {
     DynamicJsonBuffer buf;
     auto &root = buf.createObject();
     root["op"] = "fileListing";
@@ -105,39 +105,40 @@ String buildSdFileList() {
     }
 
     String out;
-    root.printTo(out);
+    root.printTo(*response);
     root.printTo(Serial);
-    return out;
 }
 
 void setupUploadHandler() {
     static FILE *file = nullptr;
 
-    // TODO:: make sure this doesn't get stuck (setup some kind of timeout)
-    auto &wsm = WebSocketManager::Instance();
-    wsm.onOp("fileUploadStart", [&](OperationMessage m) {
-        sd_mode(true);
-        Serial.printf("Starting file upload for file %s.\r\n", m.root["name"].as<const char *>());
-        file = fopen(m.root["name"].as<const char *>(), "wb");
-        if (file == nullptr) {
-            Serial.println("Failed to open file for writing");
-            //webSocket.sendTXT(num, "ERR"); // FIXME
-            sd_mode(false);
-        } else {
-            wsm.attachBinaryHandler([&](BinaryMessage m) {
-                fwrite(m.payload, m.payloadLength, 1, file); // this is so flipping baffling
-                Serial.printf("fileUpload: Added %u bytes.\r\n", m.payloadLength);
-                m.client->text(R"({"op": "fileUploadChunkAck"})");
-            });
+    webServer.on("/sd", HTTP_POST, [](AsyncWebServerRequest *request) {
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/plain");
+        response->addHeader("Connection", "close");
+        response->addHeader("Access-Control-Allow-Origin", "*");
+        request->send(response);
+    }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (!index) {
+            sd_mode(true);
+            Serial.printf("Upload Start: %s\n", filename.c_str());
+            file = fopen(("/sd/" + filename).c_str(), "wb");
+            if (file == nullptr) {
+                Serial.println("Failed to open file for writing");
+                sd_mode(false);
+                return;
+                // TODO how to abort?
+            }
         }
-    });
+        if (file == nullptr) { return; } // FIXME
 
-    wsm.onOp("fileUploadComplete", [&](OperationMessage m) {
-        wsm.detachBinaryHandler();
-        Serial.println("Closing file.");
-        fclose(file);
-        file = nullptr;
-        sd_mode(false);
+        fwrite(data, len, 1, file);
+
+        if (final) {
+            Serial.println("Closing file.");
+            fclose(file);
+            file = nullptr;
+            sd_mode(false);
+        }
     });
 }
 
@@ -158,7 +159,6 @@ void initWifi() {
 void initWebsockets() {
     setupUploadHandler();
     setupFirmwareUpdate();
-    auto &wsm = WebSocketManager::Instance();
     wsm.onOp("menuClick", [](OperationMessage m) {
         Serial.println("CLICK!");
         menuManager.click();
@@ -171,10 +171,13 @@ void initWebsockets() {
         Serial.println("DOWN!");
         menuManager.down();
     });
-    wsm.onOp("fileListing", [](OperationMessage m) {
+    webServer.on("/sd", HTTP_GET, [](AsyncWebServerRequest *request) {
+        auto *response = request->beginResponseStream("text/json");
+        response->addHeader("Access-Control-Allow-Origin", "*");
         sd_mode(true);
-        m.client->text(buildSdFileList().c_str());
+        buildSdFileList(response);
         sd_mode(false);
+        request->send(response);
     });
 }
 
@@ -182,16 +185,16 @@ void initScreenEvents() {
     ScreenWatcher::screenBuffer.subUpdate([](ScreenBuffer *buf) {
         const size_t bufferSize = JSON_ARRAY_SIZE(80) + JSON_OBJECT_SIZE(2) + 380;
         DynamicJsonBuffer jsonBuffer(bufferSize);
-        auto &obj = jsonBuffer.createObject();
-        obj["op"] = "screenUpdate";
-        auto &screenArray = obj.createNestedArray("s");
+        auto &root = jsonBuffer.createObject();
+        root["op"] = "screenUpdate";
+        auto &screenArray = root.createNestedArray("s");
         for (auto i: buf->read()) {
             screenArray.add(int(i));
         }
 
         String out;
-        obj.printTo(out);
-        WebSocketManager::Instance().broadcast(out.c_str());
+        root.printTo(out);
+        wsm.broadcast(out);
     });
 }
 
@@ -214,6 +217,20 @@ void setup() {
     initWifi();
     configTzTime("EST", "pool.ntp.org");
     initWebsockets();
+
+
+    webServer.onNotFound([] (AsyncWebServerRequest *request) {
+       if(request->method() == HTTP_OPTIONS) {
+           auto *response = request->beginResponse(200);
+           response->addHeader("Access-Control-Allow-Origin", "*");
+           request->send(response);
+       } else {
+           request->send(404);
+       }
+    });
+
+    webServer.begin();
+
     initScreenEvents();
     ScreenWatcher::start();
 

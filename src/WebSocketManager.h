@@ -25,14 +25,7 @@ typedef function<void(OperationMessage)> OperationMessageCallback;
 typedef function<void(BinaryMessage)> BinaryMessageCallback;
 
 class WebSocketManager {
-
-    WebSocketManager() : webSocket("/ws"), server(80) {
-        webSocket.onEvent(std::bind(&WebSocketManager::webSocketEvent, this, _1, _2, _3, _4, _5, _6));
-        server.addHandler(&webSocket);
-        server.begin();
-    }
-
-    AsyncWebServer server;
+    AsyncWebServer &server;
     AsyncWebSocket webSocket;
 
     std::map<string, OperationMessageCallback> opcodeMap{};
@@ -50,12 +43,19 @@ class WebSocketManager {
                 auto ip = client->remoteIP();
                 Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\r\n", client->id(), ip[0], ip[1], ip[2],
                               ip[3], server->url());
-            }
                 break;
+            }
+            case WS_EVT_ERROR: {
+                Serial.printf("ws[%s][%u] error(%u): %s\r\n", server->url(), client->id(), *((uint16_t *) arg),
+                              (char *) data);
+                break;
+            }
             case WS_EVT_DATA: {
                 auto *info = static_cast<AwsFrameInfo *>(arg);
                 if (info->final && info->index == 0 && info->len == len) {
                     Serial.println("Final.");
+                } else {
+                    Serial.println("-------------------------NOT FINAL!!");
                 }
 
                 if (info->opcode == WS_TEXT) {
@@ -81,11 +81,16 @@ class WebSocketManager {
 
 public:
 
+    explicit WebSocketManager(AsyncWebServer &webServer) : webSocket("/ws"), server(webServer) {
+        webSocket.onEvent(std::bind(&WebSocketManager::webSocketEvent, this, _1, _2, _3, _4, _5, _6));
+        server.addHandler(&webSocket);
+    }
+
     void onOp(const string &opCode, OperationMessageCallback callback) {
         opcodeMap[opCode] = std::move(callback);
     }
 
-    void broadcast(const char *text) {
+    void broadcast(String text) {
         webSocket.textAll(text);
     }
 
@@ -99,14 +104,5 @@ public:
 
     void detachBinaryHandler() {
         binaryHandler = nullptr;
-    }
-
-    WebSocketManager(WebSocketManager const &) = delete;
-
-    WebSocketManager &operator=(WebSocketManager const &) = delete;
-
-    static WebSocketManager &Instance() {
-        static WebSocketManager i;
-        return i;
     }
 };
