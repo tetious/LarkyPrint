@@ -18,7 +18,7 @@ void TimerThing::clearTimeout(unsigned int id) {
 
 
 Thing TimerThing::defer(const unsigned long _millis, function<void()> lambda) {
-    return defer_abs(_millis + xTaskGetTickCount() / portTICK_PERIOD_MS, move(lambda));
+    return defer_abs(_millis + millis(), move(lambda));
 }
 
 Thing TimerThing::defer_abs(const unsigned long _millis, function<void()> lambda) {
@@ -65,7 +65,7 @@ TimerThing::TimerThing() {
         const auto freq = 1 / portTICK_PERIOD_MS;
         while (true) {
             lastWakeTime = xTaskGetTickCount();
-            static_cast<TimerThing *>(o)->loop(lastWakeTime / portTICK_PERIOD_MS);
+            static_cast<TimerThing *>(o)->loop(millis());
             vTaskDelayUntil(&lastWakeTime, freq);
         }
     }, "tt_loop", 2048, this, 1, nullptr);
