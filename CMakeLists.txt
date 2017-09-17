@@ -18,7 +18,7 @@ add_custom_target(
 add_custom_target(
     PLATFORMIO_UPLOAD_OTA ALL
     COMMAND ${PLATFORMIO_CMD} -f -c clion run
-    COMMAND tools/update_firmware.py .pioenvs/esp32dev/firmware.bin 192.168.0.149
+    COMMAND tools/update.py .pioenvs/esp32dev/firmware.bin 192.168.0.149
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
