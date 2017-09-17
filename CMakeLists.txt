@@ -18,7 +18,7 @@ add_custom_target(
 add_custom_target(
     PLATFORMIO_UPLOAD_OTA ALL
     COMMAND ${PLATFORMIO_CMD} -f -c clion run
-    COMMAND tools/update.py .pioenvs/esp32dev/firmware.bin 192.168.0.149
+    COMMAND tools/update.py .pioenvs/esp32dev/firmware.bin 192.168.0.169
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -58,4 +58,4 @@ add_custom_target(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_executable(${PROJECT_NAME} ${SRC_LIST})
+add_executable(${PROJECT_NAME} ${SRC_LIST} src/FatHelpers.h src/LarkyPrint.h)
