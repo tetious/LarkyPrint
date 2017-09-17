@@ -1,3 +1,4 @@
+#include "LarkyPrint.h"
 #include "Arduino.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
@@ -25,7 +26,7 @@ void sd_mode(bool espOwnsSd) {
         digitalWrite(sd_detect_out, HIGH);
         digitalWrite(sd_mux_s, LOW);
         //TODO: we probably want to break this up into SPI init and mount
-        if (!sd.mount(spi_miso, spi_mosi, spi_clk, sd_spi_ss)) {
+        if (!sd.mount()) {
             Serial.println("Card Mount Failed");
             // FIXME: if the SD card fails to mount, subsequent attempts crash the board
         } else {
@@ -40,7 +41,7 @@ void sd_mode(bool espOwnsSd) {
         }
         Serial.println("The ESP now owns the SD card.");
     } else {
-        //SD.end();
+        sd.umount();
         // switch mux to printer and trigger card insert
         digitalWrite(sd_mux_s, HIGH);
         digitalWrite(sd_detect_out, LOW);
@@ -114,8 +115,9 @@ void buildSdFileList(AsyncResponseStream *response) {
 
     for (auto file: sd.files("/sd")) {
         auto &fileObj = fileList.createNestedObject();
-        fileObj["name"] = buf.strdup(file.name);
+        fileObj["name"] = file.name;
         fileObj["size"] = file.size;
+        fileObj["created"] = file.created;
     }
 
     root.printTo(*response);
@@ -215,7 +217,7 @@ void initScreenEvents() {
             screenArray.add(int(i));
         }
 
-        String out;
+        string out;
         root.printTo(out);
         wsm.broadcast(out.c_str(), "screenUpdate");
     });
@@ -234,6 +236,8 @@ void setup() {
     pinMode(sd_detect_out, OUTPUT);
     pinMode(sd_mux_s, OUTPUT);
     //sdSpi.begin(spi_clk, spi_miso, spi_mosi);
+    sd_mode(true);
+    sd.init(spi_miso, spi_mosi, spi_clk, sd_spi_ss);
     sd_mode(false);
 
     //digitalWrite(spi_clk, HIGH);
