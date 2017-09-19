@@ -4,7 +4,6 @@
 #include "hd44780.h"
 #include <array>
 #include <algorithm>
-#include "Helpers.h"
 
 using namespace std;
 

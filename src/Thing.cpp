@@ -1,7 +1,5 @@
 #include "Thing.h"
 
-#include <utility>
-
 #include "TimerThing.h"
 
 using namespace std;
