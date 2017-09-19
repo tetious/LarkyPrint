@@ -24,8 +24,8 @@ private:
     vector<function<void(ScreenBuffer *)>> updateCallbacks{};
 
     void updateTimeout() {
-        if (!updateSent && millis() - lastUpdate > 100) {
-            for (auto cb: updateCallbacks) {
+        if (!updateSent && millis() - lastUpdate > 5) {
+            for (const auto &cb: updateCallbacks) {
                 cb(this);
             }
             updateSent = true;
@@ -51,6 +51,8 @@ public:
     }
 
     IRAM_ATTR void write(lcd_cap &cap) {
+
+        lastUpdate = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
 
         if (leftToSkip > 0) {
             leftToSkip--;
@@ -85,7 +87,6 @@ public:
         }
         buffer[cursorPos] = cap.data;
         cursorPos++;
-        lastUpdate = xTaskGetTickCountFromISR() * portTICK_PERIOD_MS;
         updateSent = false;
     }
 

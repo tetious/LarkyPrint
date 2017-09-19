@@ -1,4 +1,4 @@
-#include "LarkyPrint.h"
+
 #include "Arduino.h"
 #include <WiFi.h>
 #include <ArduinoJson.h>
@@ -11,7 +11,7 @@
 #include "EventSourceManager.h"
 #include "EspSdWrapper.h"
 #include "ScreenWatcher.h"
-
+#include "esp_ota_ops.h"
 
 MenuManager menuManager = MenuManager(ScreenWatcher::screenBuffer);
 EspSdWrapper sd;
@@ -67,6 +67,8 @@ void setupFirmwareUpdate() {
             }
 
             Serial.println("Starting firmware update.");
+            log_d("before firmware update, bp: %04x, cp: %04x", esp_ota_get_boot_partition()->address,
+                  esp_ota_get_running_partition()->address);
             ScreenWatcher::stop();
             if (!Update.begin(static_cast<size_t>(atoi(size.c_str())))) {
                 Serial.println("Update.begin error");
@@ -79,9 +81,7 @@ void setupFirmwareUpdate() {
         if (!updateRunning) { return; }
 
         auto written = Update.write(data, len);
-        if (written > 0) {
-            Serial.printf("firmwareUpdate: %u\r\n", Update.remaining());
-        } else {
+        if (written == 0) {
             Serial.println("Written was zero.");
             Update.printError(Serial);
             updateRunning = false;
@@ -91,6 +91,8 @@ void setupFirmwareUpdate() {
             if (Update.end()) {
                 Serial.println("OTA done!");
                 if (Update.isFinished()) {
+                    log_d("after firmware update, bp: %04x, cp: %04x", esp_ota_get_boot_partition()->address,
+                          esp_ota_get_running_partition()->address);
                     Serial.println("Update successfully completed. Rebooting.");
                     restartNow = true;
                 } else {
@@ -282,6 +284,9 @@ void setup() {
     ScreenWatcher::start();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
+    log_d("bp: %04x, cp: %04x", esp_ota_get_boot_partition()->address,
+          esp_ota_get_running_partition()->address);
+
     Serial.println(13);
 }
 
