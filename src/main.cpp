@@ -197,6 +197,27 @@ void initWebsockets() {
         menuManager.down();
         request->send(200);
     });
+    webServer.on("/menu/sdPrint", HTTP_POST, [](AsyncWebServerRequest *request) {
+        log_e("Request.");
+        request->send(200);
+    }, nullptr, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        log_e("BODY: %s", data);
+        if (total > len) {
+            log_e("/sd/print POST index > 0!");
+            return;
+        }
+
+        DynamicJsonBuffer jsonBuffer;
+        auto &root = jsonBuffer.parseObject(data);
+        if (!root.success()) {
+            log_e("/sd/print error parsing JSON!");
+        }
+
+        menuManager.printFile(root["f"], [&](bool s) {
+            wsm.broadcast(s ? "true" : "false", "sdPrint");
+        });
+    });
+
     webServer.on("/sd", HTTP_GET, [](AsyncWebServerRequest *request) {
         auto *response = request->beginResponseStream("text/json");
         sd_mode(true);
@@ -261,6 +282,7 @@ void setup() {
     ScreenWatcher::start();
 
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
+    Serial.println(13);
 }
 
 void loop() {
