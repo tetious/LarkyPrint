@@ -5,13 +5,14 @@
 #include "secure.h"
 #include "pins.h"
 #include "ScreenBuffer.h"
-#include "MenuManager.h"
+#include "menu/MenuManager.h"
 #include <Update.h>
 #include "ESPAsyncWebServer.h"
 #include "EventSourceManager.h"
 #include "EspSdWrapper.h"
 #include "ScreenWatcher.h"
 #include "esp_ota_ops.h"
+#include "html.h"
 
 MenuManager menuManager = MenuManager(ScreenWatcher::screenBuffer);
 EspSdWrapper sd;
@@ -50,6 +51,9 @@ void sd_mode(bool espOwnsSd) {
 }
 
 void setupFirmwareUpdate() {
+    webServer.on("/fw", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/html", update_html);
+    });
     webServer.on("/fw", HTTP_POST, [](AsyncWebServerRequest *request) {
         restartNow = !Update.hasError();
         AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", restartNow ? "OK" : "FAIL");
@@ -61,9 +65,13 @@ void setupFirmwareUpdate() {
             auto md5 = request->arg("md5");
             auto size = request->arg("size");
 
-            if (md5 == "" || size == "") {
-                Serial.println("md5 or size not found.");
+            if (size == "") {
+                log_w("size not found.");
                 return;
+            }
+
+            if (md5 == "") {
+                log_w("md5 not found.");
             }
 
             Serial.println("Starting firmware update.");
@@ -73,7 +81,7 @@ void setupFirmwareUpdate() {
             if (!Update.begin(static_cast<size_t>(atoi(size.c_str())))) {
                 Serial.println("Update.begin error");
                 Update.printError(Serial);
-            } else {
+            } else if (md5.length() > 0) {
                 updateRunning = Update.setMD5(md5.c_str());
             }
         }
@@ -287,7 +295,7 @@ void setup() {
     log_d("bp: %04x, cp: %04x", esp_ota_get_boot_partition()->address,
           esp_ota_get_running_partition()->address);
 
-    Serial.println(13);
+    Serial.println(14);
 }
 
 void loop() {
