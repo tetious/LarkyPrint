@@ -13,20 +13,25 @@ struct lcd_cap {
 };
 
 class ScreenBuffer {
-    const static byte SIZE = 80;
+public:
+    typedef function<void(ScreenBuffer *, bool)> bufferUpdateCallback;
 private:
+    const static byte SIZE = 80;
+    const static uint8_t updateTimeoutMs = 5;
     array<char, SIZE> buffer{};
     byte cursorPos = 0;
     byte leftToSkip = 0;
     unsigned long lastUpdate = 0;
     bool updateSent = true;
-    vector<function<void(ScreenBuffer *)>> updateCallbacks{};
+    bool screenCleared = false;
+    vector<bufferUpdateCallback> updateCallbacks{};
 
     void updateTimeout() {
-        if (!updateSent && millis() - lastUpdate > 5) {
-            for (const auto &cb: updateCallbacks) {
-                cb(this);
+        if (!updateSent && millis() - lastUpdate > updateTimeoutMs) {
+            for (auto cb: updateCallbacks) {
+                cb(this, screenCleared);
             }
+            screenCleared = false;
             updateSent = true;
         }
     }
@@ -36,7 +41,7 @@ public:
         buffer.fill(' ');
         xTaskCreate([](void *o) {
             TickType_t lastWakeTime;
-            const auto freq = 100 / portTICK_PERIOD_MS;
+            const auto freq = updateTimeoutMs / portTICK_PERIOD_MS;
             while (true) {
                 lastWakeTime = xTaskGetTickCount();
                 static_cast<ScreenBuffer *>(o)->updateTimeout();
@@ -45,7 +50,7 @@ public:
         }, "sb_loop", 2048, this, 1, nullptr);
     }
 
-    void subUpdate(function<void(ScreenBuffer *)> cb) {
+    void subUpdate(bufferUpdateCallback cb) {
         updateCallbacks.push_back(cb);
     }
 
@@ -73,6 +78,7 @@ public:
                 cursorPos = loc;
             } else if ((cap.data & LCD_CLEARDISPLAY) == LCD_CLEARDISPLAY) {
                 buffer.fill(' ');
+                screenCleared = true;
                 cursorPos = 0;
             } else if ((cap.data & LCD_SETCGRAMADDR) == LCD_SETCGRAMADDR) {
                 // next 8 bytes are graphical data and should be skipped.

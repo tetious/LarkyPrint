@@ -17,13 +17,11 @@ class MenuTask {
     unsigned long timeoutTime = 0;
     uint8_t retries = 0;
     std::function<void(bool)> callback;
+protected:
     MenuTaskState currentState = MenuTaskState::Incomplete;
-
 public:
 
-    void executeCallback() {
-        callback(currentState == MenuTaskState::Complete);
-    }
+    void executeCallback();
 
     explicit MenuTask(uint16_t timeout, std::function<void(bool)> callback)
             : timeoutStart(timeout), callback(std::move(callback)) {}
@@ -31,7 +29,14 @@ public:
     virtual void Run(MenuManager &mm) = 0;
 
     virtual MenuTaskState IsComplete(MenuManager &mm, unsigned long currentTime) {
-        if (timeoutTime > currentTime) {
+        //log_v("timeoutTime = %u, retries = %u, currentTime = %u", timeoutTime, retries, currentTime);
+
+        if (timeoutTime == 0) {
+            log_v("starting timeout timer");
+            timeoutTime = currentTime + timeoutStart;
+        }
+
+        if (currentTime > timeoutTime) {
             if (retries < 3) {
                 retries++;
                 timeoutTime = currentTime + timeoutStart;
@@ -43,11 +48,6 @@ public:
             }
         }
 
-        if (timeoutTime == 0) {
-            log_v("starting timeout timer");
-            timeoutTime = currentTime + timeoutStart;
-        }
-
         return (currentState = MenuTaskState::Incomplete);
     }
 };
@@ -57,7 +57,7 @@ class MoveTask : public MenuTask {
     int8_t direction;
 
 public:
-    explicit MoveTask(const std::function<void(bool)> &callback);
+    explicit MoveTask(int8_t direction, const std::function<void(bool)> &callback);
 
     void Run(MenuManager &mm) override;
 

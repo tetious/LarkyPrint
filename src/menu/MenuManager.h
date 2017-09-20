@@ -7,12 +7,15 @@ const uint8_t TEMP_SYMBOL = 0x02, UP_ARROW = 0x03;
 const int8_t NO_MOVE = -99;
 
 class ScreenBuffer;
+
 class TimerThing;
+
 class MenuTask;
 
 class MenuManager {
     const uint8_t EncoderTickLength = 20;
     const uint8_t EncoderMoveTime = EncoderTickLength / 2 * 3;
+    const uint8_t ClickTime = 5;
     const int8_t mnu_SdCard = 3;
     const int8_t mnu_Control = 2;
     const std::list<int8_t> mnu_Temp = {mnu_Control, 1};
@@ -22,7 +25,7 @@ class MenuManager {
     void _up(const std::function<void()> &done = nullptr);
 
 public:
-    explicit MenuManager(ScreenBuffer &screenBuffer);
+    explicit MenuManager(ScreenBuffer &screenBuffer) noexcept;
 
     // todo: rework so up and down are reliable even with buggy encoder config
 
@@ -49,8 +52,10 @@ private:
     TimerThing &timer;
     bool menuEncoderReversed = true;
     bool _hasMoved = false;
+    bool _hasClicked = false;
+    bool _clickToProcess = false;
     int8_t moved = 0;
-    std::queue<MenuTask*> taskQueue{};
+    std::queue<MenuTask *> taskQueue{};
 
     uint8_t menuLevel = 0;
     bool clickGoesUp = false;
@@ -58,7 +63,6 @@ private:
 
     void attachUpdate();
 
-    void processQueue(unsigned long millis);
+    void processQueue();
 
-    bool _hasClicked;
 };

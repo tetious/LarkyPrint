@@ -38,10 +38,10 @@ void MenuManager::click() {
     menuItem = "";
 
     digitalWrite(encoder_switch, LOW);
-    timer.defer(5, [] { digitalWrite(encoder_switch, HIGH); })
+    timer.defer(ClickTime, [] { digitalWrite(encoder_switch, HIGH); })
             .then([&] {
-                clickGoesUp ? menuLevel-- : menuLevel++;
-                _hasClicked = true;
+                _hasClicked = false;
+                _clickToProcess = true;
             });
 }
 
@@ -62,11 +62,7 @@ void MenuManager::down() {
 }
 
 void MenuManager::moveTo(const list<int8_t> path, const function<void(bool)> &cb) {
-    for (auto i: path) {
-        click();
-        //if (!move(i)) { cb(false); }
-    }
-    if (cb) { cb(true); }
+
 }
 
 void MenuManager::find(const string &item, function<void(bool)> cb, bool recursing = false) {
@@ -100,17 +96,20 @@ void MenuManager::printFile(string filename, const function<void(bool)> &cb) {
     log_v("printing filename: %s.", filename.c_str());
 
     taskQueue.emplace(new ClickTask([this](bool s) {
+        log_v("click -> %s", s ? "true" : "false");
         if (!s) { return; }
         auto steps = mnu_SdCard;
         while (steps-- > 1) {
-            taskQueue.emplace(new MoveTask(nullptr));
+            taskQueue.emplace(new MoveTask(1, nullptr));
         }
-        taskQueue.emplace(new MoveTask([this](bool s) {
+        taskQueue.emplace(new MoveTask(1, [this](bool s) {
+            log_v("last move -> %s", s ? "true" : "false");
             if (!s) { return; }
-            log_e("FOUND IT?");
+            log_v("FOUND IT?");
             taskQueue.emplace(new ClickTask([this](bool s) {
+                log_v("last click -> %s", s ? "true" : "false");
                 if (!s) { return; }
-                log_e("DONE");
+                log_v("DONE");
             }));
         }));
     }));
@@ -122,26 +121,42 @@ void MenuManager::setTemp(string heater, uint8_t temp, function<void(bool)> cb) 
 }
 
 void MenuManager::attachUpdate() {
-    screenBuffer.subUpdate([&](ScreenBuffer *) {
+    screenBuffer.subUpdate([&](ScreenBuffer *, bool screenCleared) {
         auto buffer = screenBuffer.read();
+        static uint8_t priorMenuLevel = 0;
+
         uint8_t offsets[] = {0, 20, 40, 60};
         if (buffer[0] == TEMP_SYMBOL) {
             menuLevel = 0;
+            priorMenuLevel = 0;
             menuItem = "";
+            clickGoesUp = false;
+            _clickToProcess = false;
             return;
         }
         for (auto offset: offsets) {
 //                Serial.printf("Offset: %u, Buffer: %2X\r\n", offset, buffer[offset]);
             if (buffer[offset] != ' ') {
                 clickGoesUp = buffer[offset] == UP_ARROW;
-                static uint8_t priorRow{};
-                uint8_t newRow = static_cast<uint8_t>(offset / 20 + 1);
+
+                if (_clickToProcess) {
+                    log_v("_clickToProcess == true");
+                    _clickToProcess = false;
+                    _hasClicked = true;
+                    if (clickGoesUp) {
+                        menuLevel--;
+                    } else {
+                        menuLevel++;
+                    }
+                }
+                static uint8_t priorRow = 1;
+                auto newRow = static_cast<uint8_t>(offset / 20 + 1);
                 string newMenuItem = {buffer.begin() + offset + 1, buffer.begin() + offset + 20};
 
                 // if we're at the bottom or top, we might be scrolling which is "moving"
                 if (newRow == 4 || newRow == 1) {
                     // if we just moved down a level, menuItem will be empty
-                    if (menuItem != "" && newMenuItem != menuItem) {
+                    if (!menuItem.empty() && newMenuItem != menuItem) {
                         // we scrolled, so that's moving
                         if (newRow == 4) {
                             moved = 1;
@@ -152,11 +167,20 @@ void MenuManager::attachUpdate() {
                         }
                     } else {
                         moved = 0;
+                        _hasMoved = true;
                     }
                 } else { // normal moving (i.e. not scrolling)
                     moved = newRow - priorRow;
                     _hasMoved = true;
                 }
+                if (priorMenuLevel != menuLevel) {
+                    log_v("menuLevel %u->%u", priorMenuLevel, menuLevel);
+                    priorMenuLevel = menuLevel;
+                    moved = 0;
+                }
+
+                log_v("moved: %i", moved);
+
                 priorRow = newRow;
                 menuItem = std::move(newMenuItem);
                 break;
@@ -166,8 +190,8 @@ void MenuManager::attachUpdate() {
 }
 
 int8_t MenuManager::hasMoved() {
-    log_v("_hasMoved: %s", _hasMoved ? "true" : "false");
     if (_hasMoved) {
+        log_v("_hasMoved: %s", _hasMoved ? "true" : "false");
         _hasMoved = false;
         return moved;
     }
@@ -177,17 +201,19 @@ int8_t MenuManager::hasMoved() {
 
 
 bool MenuManager::hasClicked() {
-    log_v("_hasMoved: %s, _hasClicked: %s", _hasMoved ? "true" : "false", _hasClicked ? "true" : "false");
     if (_hasMoved) {
+        log_v("_hasMoved: %s, _hasClicked: %s", _hasMoved ? "true" : "false", _hasClicked ? "true" : "false");
         _hasMoved = false;
-        _hasClicked = false;
-        return _hasClicked;
+        if (_hasClicked) {
+            _hasClicked = false;
+            return true;
+        }
     }
 
     return false;
 }
 
-void MenuManager::processQueue(const unsigned long millis) {
+void MenuManager::processQueue() {
     if (!taskQueue.empty()) {
         auto *task = taskQueue.front();
         taskQueue.pop();
@@ -195,15 +221,18 @@ void MenuManager::processQueue(const unsigned long millis) {
         MenuTaskState state = MenuTaskState::Retry;
         do {
             if (state == MenuTaskState::Retry) { task->Run(*this); }
-            state = task->IsComplete(*this, millis);
+            delay(10);
+
+            state = task->IsComplete(*this, millis());
         } while (state == MenuTaskState::Incomplete || state == MenuTaskState::Retry);
 
         task->executeCallback();
+        log_v("Task %x complete.", task);
         delete task;
     }
 }
 
-MenuManager::MenuManager(ScreenBuffer &screenBuffer)
+MenuManager::MenuManager(ScreenBuffer &screenBuffer) noexcept
         : screenBuffer(screenBuffer), timer(TimerThing::Instance()) {
     pinMode(encoder_switch, OUTPUT);
     digitalWrite(encoder_switch, HIGH);
@@ -214,12 +243,9 @@ MenuManager::MenuManager(ScreenBuffer &screenBuffer)
     attachUpdate();
 
     xTaskCreate([](void *o) {
-        TickType_t lastWakeTime;
-        const auto freq = 1 / portTICK_PERIOD_MS;
         while (true) {
-            lastWakeTime = xTaskGetTickCount();
-            static_cast<MenuManager *>(o)->processQueue(millis());
-            vTaskDelayUntil(&lastWakeTime, freq);
+            static_cast<MenuManager *>(o)->processQueue();
+            delay(100);
         }
     }, "mm_queue", 2048, this, 1, nullptr);
 }

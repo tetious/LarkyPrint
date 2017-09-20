@@ -3,8 +3,14 @@
 
 using namespace std;
 
-MoveTask::MoveTask(const function<void(bool)> &callback) :
-        MenuTask(100, callback) {}
+void MenuTask::executeCallback() {
+    log_v("Complete after %u ms.", (millis() + timeoutStart - timeoutTime) + (timeoutStart * retries));
+    log_v("m: %u, tt: %u, ts: %u, r: %u.", millis(), timeoutTime, timeoutStart, retries);
+    if (callback) { callback(currentState == MenuTaskState::Complete); }
+}
+
+MoveTask::MoveTask(int8_t direction, const function<void(bool)> &callback) :
+        MenuTask(1000, callback), direction(direction) {}
 
 void MoveTask::Run(MenuManager &mm) {
     if (direction > 0) {
@@ -20,7 +26,7 @@ MenuTaskState MoveTask::IsComplete(MenuManager &mm, unsigned long currentTime) {
     auto state = MenuTask::IsComplete(mm, currentTime);
     if (state != MenuTaskState::Incomplete) { return state; }
 
-    return mm.hasMoved() != NO_MOVE ? MenuTaskState::Complete : MenuTaskState::Incomplete;
+    return (currentState = mm.hasMoved() != NO_MOVE ? MenuTaskState::Complete : MenuTaskState::Incomplete);
 }
 
 ClickTask::ClickTask(const function<void(bool)> &callback) :
@@ -35,5 +41,5 @@ MenuTaskState ClickTask::IsComplete(MenuManager &mm, unsigned long currentTime) 
     auto state = MenuTask::IsComplete(mm, currentTime);
     if (state != MenuTaskState::Incomplete) { return state; }
 
-    return mm.hasClicked() != NO_MOVE ? MenuTaskState::Complete : MenuTaskState::Incomplete;
+    return (currentState = mm.hasClicked() ? MenuTaskState::Complete : MenuTaskState::Incomplete);
 }

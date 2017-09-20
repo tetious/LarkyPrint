@@ -3,7 +3,7 @@
 const char update_html[] PROGMEM = R"(
 <form method="POST" action="/fw" enctype="multipart/form-data">
     <input type="hidden" name="size" id="size">
-    <input id="file" type="file" accept=".bin" name="update">
+    <input id="file" type="file" accept=".bin" name="file">
     <input id="submit" type="submit">
 </form>
 
