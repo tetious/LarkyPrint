@@ -36,3 +36,16 @@ voidCCallback makeCCallback(void (T::*method)(),T* r){
     void (*c_function_pointer)() = static_cast<decltype(c_function_pointer)>(Callback<void()>::callback);
     return c_function_pointer;
 }
+
+std::string trim(const std::string &s)
+{
+    std::string::const_iterator it = s.begin();
+    while (it != s.end() && isspace(*it))
+        it++;
+
+    std::string::const_reverse_iterator rit = s.rbegin();
+    while (rit.base() != it && isspace(*rit))
+        rit++;
+
+    return std::string(it, rit.base());
+}

@@ -10,7 +10,7 @@ void MenuTask::executeCallback() {
 }
 
 MoveTask::MoveTask(int8_t direction, const function<void(bool)> &callback) :
-        MenuTask(1000, callback), direction(direction) {}
+        MenuTask(500, callback), direction(direction) {}
 
 void MoveTask::Run(MenuManager &mm) {
     if (direction > 0) {
@@ -30,7 +30,7 @@ MenuTaskState MoveTask::IsComplete(MenuManager &mm, unsigned long currentTime) {
 }
 
 ClickTask::ClickTask(const function<void(bool)> &callback) :
-        MenuTask(1000, callback) {}
+        MenuTask(500, callback) {}
 
 void ClickTask::Run(MenuManager &mm) {
     log_v("clicking");
@@ -42,4 +42,15 @@ MenuTaskState ClickTask::IsComplete(MenuManager &mm, unsigned long currentTime) 
     if (state != MenuTaskState::Incomplete) { return state; }
 
     return (currentState = mm.hasClicked() ? MenuTaskState::Complete : MenuTaskState::Incomplete);
+}
+
+FindTask::FindTask(std::string toFind, const std::function<void(bool)> &callback) :
+        MenuTask(1000, callback), toFind(std::move(toFind)) {}
+
+void FindTask::Run(MenuManager &mm) {
+
+}
+
+MenuTaskState FindTask::IsComplete(MenuManager &mm, unsigned long currentTime) {
+    return MenuTask::IsComplete(mm, currentTime);
 }

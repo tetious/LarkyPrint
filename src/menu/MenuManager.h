@@ -35,11 +35,11 @@ public:
 
     void down();
 
-    void moveTo(std::list<int8_t> path, const std::function<void(bool)> &cb);
+    void moveTo(int8_t count, std::function<void(bool)> cb);
 
-    void find(const std::string &item, std::function<void(bool)> cb, bool recursing);
+    void find(std::string item, std::function<void(bool)> cb);
 
-    void printFile(std::string filename, const std::function<void(bool)> &cb);
+    void printFile(std::string filename, std::function<void(bool)> cb);
 
     void setTemp(std::string heater, uint8_t temp, std::function<void(bool)> cb);
 

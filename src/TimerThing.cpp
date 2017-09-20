@@ -68,5 +68,5 @@ TimerThing::TimerThing() {
             static_cast<TimerThing *>(o)->loop(millis());
             vTaskDelayUntil(&lastWakeTime, freq);
         }
-    }, "tt_loop", 2048, this, 1, nullptr);
+    }, "tt_loop", 2048, this, 2, nullptr);
 }

@@ -1,6 +1,8 @@
 #include "Thing.h"
 #include "TimerThing.h"
 #include "MenuManager.h"
+#include "Helpers.h"
+#include <utility>
 #include "ScreenBuffer.h"
 #include "MenuTask.h"
 
@@ -61,57 +63,59 @@ void MenuManager::down() {
     }
 }
 
-void MenuManager::moveTo(const list<int8_t> path, const function<void(bool)> &cb) {
-
-}
-
-void MenuManager::find(const string &item, function<void(bool)> cb, bool recursing = false) {
-    /*log_v("Looking for item: %s.", item.c_str());
-    if (cb == nullptr) { log_e("find cb is null"); }
-    activeFinder = std::move(cb);
-    if (!recursing && activeMover != nullptr) {
-        log_e("activeMover is not null!");
-        cleanupMover();
+void MenuManager::moveTo(int8_t count, function<void(bool)> cb) {
+    auto direction = static_cast<int8_t>(count > 0 ? 1 : -1);
+    int8_t steps = count;
+    while ((steps * direction) != 1) {
+        log_v("pushing steps: %i, direction: %i", steps, direction);
+        taskQueue.push(new MoveTask(direction, nullptr));
+        steps-=direction;
     }
-
-    activeMover = new Mover{1, [=](bool s) {
-        if (item.substr(0, menuItem.size()) == menuItem) {
-            log_v("Found item: %s!", item.c_str());
-            if (activeFinder) { activeFinder(true); }
-            activeFinder = nullptr;
-        } else {
-            if (s) {
-                log_v("Still looking for item: %s...", item.c_str());
-                find(item, activeFinder, true);
-            } else {
-                if (activeFinder) { activeFinder(false); }
-                activeFinder = nullptr;
-            }
-        }
-    }};
-    startMove();*/
+    taskQueue.push(new MoveTask(direction, [=, cb = move(cb)](bool s) {
+        log_v("last move -> %s", s ? "true" : "false");
+        if (!s) { return; }
+        cb(s);
+    }));
 }
 
-void MenuManager::printFile(string filename, const function<void(bool)> &cb) {
-    log_v("printing filename: %s.", filename.c_str());
+void MenuManager::find(string item, function<void(bool)> cb) {
+    auto trimmedMenuItem = trim(menuItem);
 
-    taskQueue.emplace(new ClickTask([this](bool s) {
+    log_v("currentItem: %s, toFind: %s.", trimmedMenuItem.c_str(), item.c_str());
+
+    if ((item.substr(0, trimmedMenuItem.size()) == trimmedMenuItem)) {
+        log_v("found!");
+        cb(true);
+        return;
+    }
+    taskQueue.push(new MoveTask(1, [=, cb = move(cb)](bool s) {
+        if (!s) {
+            log_v("failed :( !");
+            return;
+        }
+        find(item, move(cb));
+    }));
+
+}
+
+void MenuManager::printFile(string filename, function<void(bool)> cb) {
+    log_v("printing filename: %s.", filename.c_str());
+    taskQueue.push(new ClickTask([=, cb = move(cb)] (bool s) {
         log_v("click -> %s", s ? "true" : "false");
         if (!s) { return; }
-        auto steps = mnu_SdCard;
-        while (steps-- > 1) {
-            taskQueue.emplace(new MoveTask(1, nullptr));
-        }
-        taskQueue.emplace(new MoveTask(1, [this](bool s) {
-            log_v("last move -> %s", s ? "true" : "false");
+
+        moveTo(mnu_SdCard, [=, cb = move(cb)](bool s) {
             if (!s) { return; }
-            log_v("FOUND IT?");
-            taskQueue.emplace(new ClickTask([this](bool s) {
+            taskQueue.push(new ClickTask([=, cb = move(cb)] (bool s) {
                 log_v("last click -> %s", s ? "true" : "false");
                 if (!s) { return; }
-                log_v("DONE");
+
+                find(filename, [=, cb = move(cb)](bool s) {
+                    cb(s);
+                    log_v("DONE");
+                });
             }));
-        }));
+        });
     }));
 }
 
@@ -193,7 +197,7 @@ int8_t MenuManager::hasMoved() {
     if (_hasMoved) {
         log_v("_hasMoved: %s", _hasMoved ? "true" : "false");
         _hasMoved = false;
-        return moved;
+        return moved != 0 ? moved : NO_MOVE;
     }
 
     return NO_MOVE;
@@ -222,7 +226,6 @@ void MenuManager::processQueue() {
         do {
             if (state == MenuTaskState::Retry) { task->Run(*this); }
             delay(10);
-
             state = task->IsComplete(*this, millis());
         } while (state == MenuTaskState::Incomplete || state == MenuTaskState::Retry);
 
@@ -245,7 +248,7 @@ MenuManager::MenuManager(ScreenBuffer &screenBuffer) noexcept
     xTaskCreate([](void *o) {
         while (true) {
             static_cast<MenuManager *>(o)->processQueue();
-            delay(100);
+            delay(1);
         }
-    }, "mm_queue", 2048, this, 1, nullptr);
+    }, "mm_queue", 2048, this, 2, nullptr);
 }

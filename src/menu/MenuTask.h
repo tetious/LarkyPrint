@@ -72,3 +72,14 @@ public:
 
     void Run(MenuManager &mm) override;
 };
+
+class FindTask : public MenuTask {
+    std::string toFind;
+
+public:
+    explicit FindTask(std::string toFind, const std::function<void(bool)> &callback);
+
+    void Run(MenuManager &mm) override;
+
+    MenuTaskState IsComplete(MenuManager &mm, unsigned long currentTime) override;
+};
