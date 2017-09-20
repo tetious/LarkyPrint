@@ -97,7 +97,7 @@ void setupFirmwareUpdate() {
             Update.printError(Serial);
             updateRunning = false;
         } else {
-            Serial.printf("%u -> %u\r\n", written, Update.remaining());
+            //Serial.printf("%u -> %u\r\n", written, Update.remaining());
         }
 
         if (final) {
@@ -297,8 +297,6 @@ void setup() {
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
     log_d("bp: %x, cp: %x", esp_ota_get_boot_partition()->address,
           esp_ota_get_running_partition()->address);
-
-    Serial.println(14);
 }
 
 void loop() {
