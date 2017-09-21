@@ -2,7 +2,7 @@
 
 #include <bits/stdc++.h>
 
-std::string string_format(const std::string fmt_str, ...) {
+inline std::string string_format(const std::string fmt_str, ...) {
     int final_n, n = ((int)fmt_str.size()) * 2; /* Reserve two times as much as the length of the fmt_str */
     std::unique_ptr<char[]> formatted;
     va_list ap;
@@ -37,7 +37,7 @@ voidCCallback makeCCallback(void (T::*method)(),T* r){
     return c_function_pointer;
 }
 
-std::string trim(const std::string &s)
+inline std::string trim(const std::string &s)
 {
     std::string::const_iterator it = s.begin();
     while (it != s.end() && isspace(*it))

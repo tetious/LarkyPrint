@@ -1,6 +1,7 @@
 
 #include "Arduino.h"
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <ArduinoJson.h>
 #include "secure.h"
 #include "pins.h"
@@ -14,6 +15,7 @@
 #include "esp_ota_ops.h"
 #include "html.h"
 #include "bits/stdc++.h"
+#include "Helpers.h"
 
 using namespace placeholders;
 
@@ -21,6 +23,7 @@ MenuManager menuManager = MenuManager(ScreenWatcher::screenBuffer);
 EspSdWrapper sd;
 AsyncWebServer webServer{80};
 EventSourceManager wsm{webServer};
+WiFiMulti wiFiMulti;
 
 auto restartNow = false;
 
@@ -99,7 +102,6 @@ void setupFirmwareUpdate() {
         } else {
             //Serial.printf("%u -> %u\r\n", written, Update.remaining());
         }
-
         if (final) {
             if (Update.end()) {
                 Serial.println("OTA done!");
@@ -170,31 +172,7 @@ void setupUploadHandler() {
     });
 }
 
-void initWifi() {
-    WiFi.onEvent([](WiFiEvent_t event) {
-        Serial.printf("[WiFi-event] event: %d\r\n", event);
-
-        switch (event) {
-            case SYSTEM_EVENT_STA_GOT_IP:
-                Serial.println("WiFi connected.");
-                Serial.println("IP address: ");
-                Serial.println(WiFi.localIP());
-                break;
-            case SYSTEM_EVENT_STA_DISCONNECTED:
-                Serial.println("WiFi lost connection");
-                break;
-        }
-    });
-
-    WiFi.begin(ssid, password);
-
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-}
-
-void initWebsockets() {
+void initWebServer() {
     setupUploadHandler();
     setupFirmwareUpdate();
     webServer.on("/menu/click", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -238,6 +216,33 @@ void initWebsockets() {
         sd_mode(false);
         request->send(response);
     });
+
+    webServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
+        string json = "[";
+        int n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_FAILED) {
+            WiFi.scanNetworks(true);
+        } else if (n) {
+            for (uint8_t i = 0; i < n; ++i) {
+                if (i) { json += ","; }
+                json += string_format(R"({"ssid": "%s", "rssi": %i,"secure": %s})",
+                                      WiFi.SSID(i).c_str(),
+                                      WiFi.RSSI(i),
+                                      WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "false" : "true");
+            }
+        }
+        json += "]";
+        request->send(200, "text/json", json.c_str());
+        WiFi.scanNetworks(true);
+    });
+
+    webServer.onNotFound([](AsyncWebServerRequest *request) {
+        if (request->method() == HTTP_OPTIONS) {
+            request->send(200);
+        } else {
+            request->send(404);
+        }
+    });
 }
 
 void initScreenEvents() {
@@ -255,6 +260,41 @@ void initScreenEvents() {
         root.printTo(out);
         wsm.broadcast(out.c_str(), "screenUpdate");
     });
+}
+
+void initWifi() {
+    WiFi.onEvent([](WiFiEvent_t event) {
+        Serial.printf("[WiFi-event] event: %d\r\n", event);
+
+        switch (event) {
+            case SYSTEM_EVENT_STA_GOT_IP:
+                Serial.println("WiFi connected.");
+                Serial.println("IP address: ");
+                Serial.print(WiFi.localIP());
+                Serial.println();
+                break;
+            case SYSTEM_EVENT_STA_DISCONNECTED:
+                Serial.println("WiFi lost connection");
+                WiFi.reconnect();
+                break;
+        }
+    });
+
+    WiFi.begin(ssid, password);
+
+    const uint32_t wifiTimeout = 30 * 1000;
+    uint32_t totalDelay = 0;
+    while (totalDelay < wifiTimeout && WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        totalDelay += 500;
+        Serial.print(".");
+    }
+
+    if(totalDelay >= wifiTimeout) {
+        log_e("Wifi failed to connect. :(");
+    }
+
+    wiFiMulti.addAP("LarkyPrint");
 }
 
 void setup() {
@@ -277,16 +317,8 @@ void setup() {
     //digitalWrite(spi_clk, HIGH);
     initWifi();
     configTzTime("EST", "pool.ntp.org");
-    initWebsockets();
 
-
-    webServer.onNotFound([](AsyncWebServerRequest *request) {
-        if (request->method() == HTTP_OPTIONS) {
-            request->send(200);
-        } else {
-            request->send(404);
-        }
-    });
+    initWebServer();
 
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     webServer.begin();
@@ -297,6 +329,7 @@ void setup() {
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
     log_d("bp: %x, cp: %x", esp_ota_get_boot_partition()->address,
           esp_ota_get_running_partition()->address);
+    Serial.println(16);
 }
 
 void loop() {
