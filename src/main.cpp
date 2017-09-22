@@ -1,7 +1,6 @@
 
 #include "Arduino.h"
 #include <WiFi.h>
-#include <WiFiMulti.h>
 #include <ArduinoJson.h>
 #include "secure.h"
 #include "pins.h"
@@ -16,6 +15,8 @@
 #include "html.h"
 #include "bits/stdc++.h"
 #include "Helpers.h"
+#include "Configuration.h"
+#include "WifiHelper.h"
 
 using namespace placeholders;
 
@@ -23,7 +24,6 @@ MenuManager menuManager = MenuManager(ScreenWatcher::screenBuffer);
 EspSdWrapper sd;
 AsyncWebServer webServer{80};
 EventSourceManager wsm{webServer};
-WiFiMulti wiFiMulti;
 
 auto restartNow = false;
 
@@ -57,9 +57,6 @@ void sd_mode(bool espOwnsSd) {
 }
 
 void setupFirmwareUpdate() {
-    webServer.on("/fw", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/html", update_html);
-    });
     webServer.on("/fw", HTTP_POST, [](AsyncWebServerRequest *request) {
         restartNow = !Update.hasError();
         AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", restartNow ? "OK" : "FAIL");
@@ -172,6 +169,28 @@ void setupUploadHandler() {
     });
 }
 
+JsonObject &GetJsonRoot(DynamicJsonBuffer &jsonBuffer, uint8_t *data) {
+    auto &root = jsonBuffer.parseObject(data);
+    if (!root.success()) {
+        log_e("error parsing JSON [%s].", data);
+    }
+
+    return root;
+}
+
+void connectWifi() {
+    auto &config = Configuration::Instance();
+    auto t_ssid = config.getS("wifi.ssid");
+    auto t_password = config.getS("wifi.password");
+    if (t_ssid.empty() || t_password.empty()) {
+        log_i("Could not load wifi creds from storage. Falling back to hardcoded values.");
+        WiFi.begin(ssid, password);
+    } else {
+        log_i("wifi: %s, %s", t_ssid.c_str(), t_password.c_str());
+        WiFi.begin(t_ssid.c_str(), t_password.c_str());
+    }
+}
+
 void initWebServer() {
     setupUploadHandler();
     setupFirmwareUpdate();
@@ -194,16 +213,11 @@ void initWebServer() {
         request->send(200);
     }, nullptr, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         if (total > len) {
-            log_e("/sd/print POST index > 0!");
+            log_e("index > 0!");
             return;
         }
-
         DynamicJsonBuffer jsonBuffer;
-        auto &root = jsonBuffer.parseObject(data);
-        if (!root.success()) {
-            log_e("/sd/print error parsing JSON!");
-        }
-
+        auto &root = GetJsonRoot(jsonBuffer, data);
         menuManager.printFile(root["f"], [&](bool s) {
             wsm.broadcast(s ? "true" : "false", "sdPrint");
         });
@@ -215,6 +229,46 @@ void initWebServer() {
         buildSdFileList(response);
         sd_mode(false);
         request->send(response);
+    });
+
+    webServer.on("/wifi", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        WiFi.disconnect();
+        auto &config = Configuration::Instance();
+        config.remove("wifi.ssid");
+        config.remove("wifi.password");
+        log_d("Cleared WiFi creds and disconnected.");
+        request->send(200);
+    });
+    webServer.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
+    }, nullptr, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        if (total > len) {
+            log_e("index > 0!");
+            request->send(500);
+            return;
+        }
+        DynamicJsonBuffer jsonBuffer;
+        auto &root = GetJsonRoot(jsonBuffer, data);
+        if (!root.success()) {
+            log_e("/sd/print error parsing JSON!");
+        }
+        auto &config = Configuration::Instance();
+        string ssid = root["ssid"];
+        string password = root["password"];
+        if (ssid.empty()) {
+            request->send(401);
+            log_d("SSID is empty");
+            return;
+        }
+        config.putS("wifi.ssid", ssid);
+        config.putS("wifi.password", password);
+        wifi_change_creds(ssid.c_str(), password.c_str());
+        request->send(200);
+    });
+
+    webServer.on("/wifi/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        auto json = string_format(R"({"status": %u, "ssid": "%s", "ip": "%s"})",
+                                  WiFi.status(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+        request->send(200, "text/json", json.c_str());
     });
 
     webServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -234,6 +288,23 @@ void initWebServer() {
         json += "]";
         request->send(200, "text/json", json.c_str());
         WiFi.scanNetworks(true);
+    });
+
+    webServer.on("/fw", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "text/html", update_html);
+    });
+    webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "text/html", wifi_html);
+    });
+
+    webServer.on("/app.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "text/css", app_css);
+    });
+    webServer.on("/mini-default.min.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "text/css", mini_default_min_css);
+    });
+    webServer.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "application/javascript", app_js);
     });
 
     webServer.onNotFound([](AsyncWebServerRequest *request) {
@@ -262,6 +333,7 @@ void initScreenEvents() {
     });
 }
 
+
 void initWifi() {
     WiFi.onEvent([](WiFiEvent_t event) {
         Serial.printf("[WiFi-event] event: %d\r\n", event);
@@ -274,27 +346,12 @@ void initWifi() {
                 Serial.println();
                 break;
             case SYSTEM_EVENT_STA_DISCONNECTED:
-                Serial.println("WiFi lost connection");
-                WiFi.reconnect();
+                log_w("WiFi lost connection: %u", WiFi.status());
                 break;
         }
     });
-
-    WiFi.begin(ssid, password);
-
-    const uint32_t wifiTimeout = 30 * 1000;
-    uint32_t totalDelay = 0;
-    while (totalDelay < wifiTimeout && WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        totalDelay += 500;
-        Serial.print(".");
-    }
-
-    if(totalDelay >= wifiTimeout) {
-        log_e("Wifi failed to connect. :(");
-    }
-
-    wiFiMulti.addAP("LarkyPrint");
+    WiFi.softAP("LarkyPrint");
+    connectWifi();
 }
 
 void setup() {
@@ -309,12 +366,10 @@ void setup() {
 
     pinMode(sd_detect_out, OUTPUT);
     pinMode(sd_mux_s, OUTPUT);
-    //sdSpi.begin(spi_clk, spi_miso, spi_mosi);
     sd_mode(true);
     sd.init(spi_miso, spi_mosi, spi_clk, sd_spi_ss);
     sd_mode(false);
 
-    //digitalWrite(spi_clk, HIGH);
     initWifi();
     configTzTime("EST", "pool.ntp.org");
 
@@ -329,7 +384,6 @@ void setup() {
     Serial.printf("Free heap: %u\r\n", ESP.getFreeHeap());
     log_d("bp: %x, cp: %x", esp_ota_get_boot_partition()->address,
           esp_ota_get_running_partition()->address);
-    Serial.println(16);
 }
 
 void loop() {

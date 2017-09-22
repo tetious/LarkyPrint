@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WiFi Setup</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="mini-default.min.css">
+</head>
+
+<body>
+
+<div class="container">
+  <div class="row">
+    <div class="col-sm-6 col-sm-offset-3">
+      <div class="card fluid">
+        <h3 class="centered">Temporary WiFi joiny thing</h3>
+        <h3>Status: <span id="status"></span></h3>
+        <h3>IP Address: <span id="ip"></span></h3>
+      </div>
+      <div class="card fluid" style="min-height: 200px">
+        <table style="width: 100%">
+          <caption>Networks</caption>
+          <thead>
+          <tr>
+            <th style="width: 2em;"></th>
+            <th>SSID</th>
+            <th style="width: 4em;">Strength</th>
+          </tr>
+          </thead>
+          <tbody id="networksBody">
+          </tbody>
+        </table>
+        <div id="networksLoading" class="hidden spinner-donut large centered"></div>
+        <div id="buttons">
+          <input id="rescan" type="button" class="primary" value="Rescan">
+          <input id="updateStatus" type="button" class="primary" value="Update Status">
+        </div>
+      </div>
+      <form>
+        <fieldset>
+          <legend>Connect to a network</legend>
+          <div class="input-group fluid vertical">
+            <label for="ssid">SSID</label>
+            <input type="text" value="" id="ssid" required placeholder="SSID">
+          </div>
+          <div class="input-group fluid vertical">
+            <label for="password">Password</label>
+            <input type="password" value="" id="password" placeholder="password">
+          </div>
+          <input id="connect" type="submit" class="primary fluid" value="Connect">
+        </fieldset>
+      </form>
+    </div>
+  </div>
+
+</div>
+<script src="app.js"></script>
+</body>
+
+</html>

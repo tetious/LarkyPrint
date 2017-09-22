@@ -1,0 +1,15 @@
+.centered {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.network {
+    cursor: pointer;
+}
+
+.connected {
+    background-color: green;
+    border-radius: 1em;
+    width: 1em;
+    height: 1em;
+}

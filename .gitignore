@@ -4,4 +4,5 @@ CMakeListsPrivate.txt
 .vscode/c_cpp_properties.json
 cmake-build-debug
 *lock*#
-.idea/*
+**/.idea/*
+*js*
