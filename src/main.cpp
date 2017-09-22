@@ -32,10 +32,8 @@ void sd_mode(bool espOwnsSd) {
         // trigger card removed signal and switch mux to ESP
         digitalWrite(sd_detect_out, HIGH);
         digitalWrite(sd_mux_s, LOW);
-        //TODO: we probably want to break this up into SPI init and mount
         if (!sd.mount()) {
             Serial.println("Card Mount Failed");
-            // FIXME: if the SD card fails to mount, subsequent attempts crash the board
         } else {
 //            uint8_t cardType = SD.cardType();
 //
